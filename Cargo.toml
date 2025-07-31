@@ -1,0 +1,73 @@
+[package]
+name = "flare-im"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Flare IM - 高性能、可扩展的即时通讯工具包"
+license = "MIT"
+repository = "https://github.com/your-username/flare-im"
+keywords = ["im", "messaging", "quic", "websocket", "real-time", "communication"]
+categories = ["network-programming", "asynchronous"]
+readme = "README.md"
+
+[lib]
+name = "flare_im"
+path = "src/lib.rs"
+
+# 依赖项
+[dependencies]
+# 异步运行时
+tokio = { version = "1.0", features = ["rt-multi-thread", "net", "time", "macros"], optional = true }
+
+# 网络协议
+quinn = { version = "0.10", optional = true }
+tokio-tungstenite = { version = "0.20", optional = true }
+tungstenite = { version = "0.20", optional = true }
+
+# TLS 支持
+rustls = { version = "0.21", optional = true }
+rustls-pemfile = { version = "1.0", optional = true }
+webpki-roots = { version = "0.25", optional = true }
+
+# 序列化
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+
+# 异步 trait
+async-trait = { version = "0.1", optional = true }
+
+# 错误处理
+thiserror = { version = "1.0", optional = true }
+
+# 工具库
+uuid = { version = "1.0", features = ["v4"], optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
+rand = { version = "0.8", optional = true }
+base64 = { version = "0.21", optional = true }
+
+# 日志
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# 其他
+anyhow = { version = "1.0", optional = true }
+url = { version = "2.4", optional = true }
+futures-util = "0.3.31"
+
+# WebAssembly 支持
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent", "CloseEvent"] }
+
+# 开发依赖
+[dev-dependencies]
+criterion = "0.5"
+mockall = "0.11"
+
+# Features 配置
+[features]
+default = ["client", "server", "common"]
+client = ["tokio", "quinn", "tokio-tungstenite", "tungstenite", "rustls", "rustls-pemfile", "webpki-roots", "tracing-subscriber", "common"]
+server = ["tokio", "quinn", "tokio-tungstenite", "tungstenite", "rustls", "rustls-pemfile", "webpki-roots", "tracing-subscriber", "common"]
+common = ["serde", "serde_json", "async-trait", "thiserror", "uuid", "chrono", "tracing", "anyhow", "url", "rand", "base64"]
