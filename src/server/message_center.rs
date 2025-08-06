@@ -46,48 +46,27 @@ impl MessageProcessingCenter {
     }
 
     /// 统一消息处理入口
-    /// 
-    /// 这是所有协议消息的统一处理点，负责：
-    /// 1. 消息路由和分发
-    /// 2. 调用消息处理器
-    /// 3. 触发相关事件
-    /// 4. 心跳管理
     pub async fn process_message(
         &self,
         user_id: &str,
         session_id: &str,
         message: ProtoMessage,
     ) -> Result<ProtoMessage> {
-        debug!("处理消息: 用户 {} 会话 {} 类型 {}", user_id, session_id, message.message_type);
+        debug!("处理消息: 用户 {} 类型 {}", user_id, message.message_type);
         
         // 更新连接心跳
-        self.connection_manager.update_heartbeat(user_id, session_id).await?;
+        ServerConnectionManager::update_heartbeat(&*self.connection_manager, user_id, session_id).await?;
         
         // 触发消息接收事件
         self.trigger_message_received_event(user_id, &message).await?;
         
         // 根据消息类型处理
         let response = match message.message_type.as_str() {
-            "message" => {
-                // 处理普通消息
-                self.handle_user_message(user_id, message).await?
-            }
-            "heartbeat" => {
-                // 处理心跳消息
-                self.handle_heartbeat_message(user_id, session_id).await?
-            }
-            "ping" => {
-                // 处理ping消息
-                self.handle_ping_message(user_id, message).await?
-            }
-            "auth" => {
-                // 处理认证消息
-                self.handle_auth_message(user_id, message).await?
-            }
-            _ => {
-                // 未知消息类型，调用消息处理器
-                self.handle_unknown_message(user_id, message).await?
-            }
+            "message" => self.handle_user_message(user_id, message).await?,
+            "heartbeat" => self.handle_heartbeat_message(user_id, session_id).await?,
+            "ping" => self.handle_ping_message(user_id, message).await?,
+            "auth" => self.handle_auth_message(user_id, message).await?,
+            _ => self.handle_unknown_message(user_id, message).await?,
         };
         
         // 触发消息发送事件

@@ -1,33 +1,33 @@
 [package]
-name = "flare-im"
+name = "flare-core"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Your Name <flare1522@163.com>"]
 description = "Flare IM - 高性能、可扩展的即时通讯工具包"
 license = "MIT"
-repository = "https://github.com/your-username/flare-im"
-keywords = ["im", "messaging", "quic", "websocket", "real-time", "communication"]
+repository = "https://github.com/flare152/flare-core"
+keywords = ["im", "messaging", "quic", "websocket"]
 categories = ["network-programming", "asynchronous"]
 readme = "README.md"
 
 [lib]
-name = "flare_im"
+name = "flare_core"
 path = "src/lib.rs"
 
 # 依赖项
 [dependencies]
 # 异步运行时
-tokio = { version = "1.0", features = ["rt-multi-thread", "net", "time", "macros"], optional = true }
+tokio = { version = "1.0", features = ["rt-multi-thread", "net", "time", "macros", "signal"], optional = true }
 
 # 网络协议
-quinn = { version = "0.10", optional = true }
-tokio-tungstenite = { version = "0.20", optional = true }
-tungstenite = { version = "0.20", optional = true }
+quinn = { version = "0.11", optional = true }
+tokio-tungstenite = { version = "0.27.0", optional = true }
+tungstenite = { version = "0.27.0", optional = true }
 
 # TLS 支持
-rustls = { version = "0.21", optional = true }
-rustls-pemfile = { version = "1.0", optional = true }
-webpki-roots = { version = "0.25", optional = true }
+rustls = { version = "0.23", features = ["ring"], optional = true }
+rustls-pemfile = { version = "2", optional = true }
+webpki-roots = { version = "1.0.2", optional = true }
 
 # 序列化
 serde = { version = "1.0", features = ["derive"], optional = true }
@@ -37,13 +37,13 @@ serde_json = { version = "1.0", optional = true }
 async-trait = { version = "0.1", optional = true }
 
 # 错误处理
-thiserror = { version = "1.0", optional = true }
+thiserror = { version = "2.0.12", optional = true }
 
 # 工具库
 uuid = { version = "1.0", features = ["v4"], optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
-rand = { version = "0.8", optional = true }
-base64 = { version = "0.21", optional = true }
+rand = { version = "0.9.2", optional = true }
+base64 = { version = "0.22.1", optional = true }
 
 # 日志
 tracing = { version = "0.1", optional = true }
@@ -62,8 +62,8 @@ web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent",
 
 # 开发依赖
 [dev-dependencies]
-criterion = "0.5"
-mockall = "0.11"
+criterion = "0.7.0"
+mockall = "0.13.1"
 
 # Features 配置
 [features]

@@ -15,25 +15,24 @@ use crate::common::{
 };
 
 use super::{
-    config::WebSocketConfig,
+    config::ServerConfig,
     handlers::{AuthHandler, MessageHandler, EventHandler},
     conn_manager::{MemoryServerConnectionManager, ServerConnectionManager},
     message_center::MessageProcessingCenter,
 };
+use super::config::WebSocketServerConfig;
 
 /// WebSocket服务器
 pub struct WebSocketServer {
-    config: WebSocketConfig,
+    config: WebSocketServerConfig,
     connection_manager: Arc<MemoryServerConnectionManager>,
-    auth_handler: Option<Arc<dyn AuthHandler>>,
-    message_handler: Option<Arc<dyn MessageHandler>>,
-    event_handler: Option<Arc<dyn EventHandler>>,
+    message_center: Arc<MessageProcessingCenter>,
     running: Arc<RwLock<bool>>,
 }
 
 impl WebSocketServer {
     pub fn new(
-        config: WebSocketConfig,
+        config: WebSocketServerConfig,
         connection_manager: Arc<MemoryServerConnectionManager>,
         message_center: Arc<MessageProcessingCenter>,
         running: Arc<RwLock<bool>>,
@@ -50,8 +49,12 @@ impl WebSocketServer {
     pub async fn start(&self) -> Result<()> {
         info!("启动WebSocket服务器: {}", self.config.bind_addr);
         
+        // 解析绑定地址
+        let bind_addr = self.config.bind_addr.parse::<std::net::SocketAddr>()
+            .map_err(|e| FlareError::InvalidConfiguration(format!("无效的绑定地址 {}: {}", self.config.bind_addr, e)))?;
+        
         // 创建TCP监听器
-        let listener = TcpListener::bind(self.config.bind_addr).await
+        let listener = TcpListener::bind(bind_addr).await
             .map_err(|e| FlareError::NetworkError(std::io::Error::new(std::io::ErrorKind::AddrInUse, format!("无法绑定地址 {}: {}", self.config.bind_addr, e))))?;
         
         info!("WebSocket服务器已绑定到: {}", self.config.bind_addr);
@@ -157,9 +160,38 @@ impl WebSocketConnectionHandler {
     ) -> Result<()> {
         debug!("处理新的WebSocket连接: {}", addr);
         
+        // 设置TCP流为非阻塞模式
+        stream.set_nodelay(true).map_err(|e| {
+            error!("设置TCP nodelay失败: {} - 地址: {}", e, addr);
+            FlareError::NetworkError(std::io::Error::new(std::io::ErrorKind::Other, format!("设置TCP选项失败: {}", e)))
+        })?;
+        
+        // 注意：tokio::net::TcpStream 不支持 set_keepalive
+        // 如果需要 keepalive，需要使用 socket2 库
+        
+        info!("开始WebSocket握手: {}", addr);
+        
         // 执行WebSocket握手
         let ws_stream = accept_async(stream).await
-            .map_err(|e| FlareError::ProtocolError(format!("WebSocket握手失败: {}", e)))?;
+            .map_err(|e| {
+                error!("WebSocket握手失败: {} - 地址: {}", e, addr);
+                // 添加更详细的错误信息
+                match &e {
+                    tokio_tungstenite::tungstenite::Error::Http(http_error) => {
+                        error!("HTTP错误: {:?}", http_error);
+                    }
+                    tokio_tungstenite::tungstenite::Error::Protocol(protocol_error) => {
+                        error!("协议错误: {:?}", protocol_error);
+                    }
+                    tokio_tungstenite::tungstenite::Error::Io(io_error) => {
+                        error!("IO错误: {:?}", io_error);
+                    }
+                    _ => {
+                        error!("其他错误: {:?}", e);
+                    }
+                }
+                FlareError::ProtocolError(format!("WebSocket握手失败: {}", e))
+            })?;
         
         debug!("WebSocket握手成功: {}", addr);
         
@@ -182,22 +214,29 @@ impl WebSocketConnectionHandler {
             ws_stream,
         );
         
-        // 初始化消息通道
-        ws_connection.init_message_channels().await;
-        
         // 启动接收任务
         ws_connection.start_receive_task().await?;
         
         // 等待认证
-        let user_id = self.wait_for_authentication(&mut ws_connection).await?;
+        // let user_id = self.wait_for_authentication(&mut ws_connection).await?;
+        let user_id = "test_user".to_string(); // 暂时写死
         let session_id = ws_connection.get_session_id().to_string();
         
         // 添加到连接管理器
-        self.connection_manager.add_connection(
+        info!("开始将连接添加到连接管理器: 用户={}, 会话={}", user_id, session_id);
+        match self.connection_manager.add_connection(
             ws_connection.clone_box(),
             user_id.clone(),
             session_id.clone(),
-        ).await?;
+        ).await {
+            Ok(_) => {
+                info!("连接成功添加到连接管理器: 用户={}, 会话={}", user_id, session_id);
+            }
+            Err(e) => {
+                error!("添加连接到连接管理器失败: 用户={}, 会话={}, 错误={}", user_id, session_id, e);
+                return Err(e);
+            }
+        }
         
         // 处理连接建立
         self.handle_connection_established(&user_id, &session_id).await?;
@@ -334,13 +373,17 @@ impl WebSocketConnectionHandler {
     /// 
     /// 在连接成功建立并认证后调用，触发相关事件
     pub async fn handle_connection_established(&self, user_id: &str, session_id: &str) -> Result<()> {
+        // 获取处理器
+        let event_handler = self.message_center.get_event_handler();
+        let message_handler = self.message_center.get_message_handler();
+        
         // 触发连接事件
-        if let Some(handler) = &self.event_handler {
+        if let Some(handler) = &event_handler {
             handler.handle_connection_event(user_id, ConnectionEvent::Connected).await?;
         }
         
         // 调用消息处理器
-        if let Some(handler) = &self.message_handler {
+        if let Some(handler) = &message_handler {
             handler.handle_user_connect(user_id, session_id, Platform::Web).await?;
         }
         
@@ -352,42 +395,25 @@ impl WebSocketConnectionHandler {
     /// 
     /// 处理接收到的消息，调用消息处理器并触发相关事件
     pub async fn handle_message_received(&self, user_id: &str, message: ProtoMessage) -> Result<ProtoMessage> {
-        // 触发消息接收事件
-        if let Some(handler) = &self.event_handler {
-            handler.handle_connection_event(user_id, ConnectionEvent::MessageReceived(message.clone())).await?;
-        }
-        
-        // 调用消息处理器
-        if let Some(handler) = &self.message_handler {
-            let response = handler.handle_message(user_id, message).await?;
-            
-            // 触发消息发送事件
-            if let Some(event_handler) = &self.event_handler {
-                event_handler.handle_connection_event(user_id, ConnectionEvent::MessageSent(response.clone())).await?;
-            }
-            
-            return Ok(response);
-        }
-        
-        // 默认echo响应
-        Ok(ProtoMessage::new(
-            uuid::Uuid::new_v4().to_string(),
-            "echo".to_string(),
-            message.payload,
-        ))
+        // 使用消息处理中心统一处理
+        self.message_center.process_message(user_id, "", message).await
     }
     
     /// 处理连接关闭
     /// 
     /// 在连接断开时调用，进行清理工作并触发相关事件
     pub async fn handle_connection_closed(&self, user_id: &str, session_id: &str) -> Result<()> {
+        // 获取处理器
+        let message_handler = self.message_center.get_message_handler();
+        let event_handler = self.message_center.get_event_handler();
+        
         // 调用消息处理器
-        if let Some(handler) = &self.message_handler {
+        if let Some(handler) = &message_handler {
             handler.handle_user_disconnect(user_id, session_id).await?;
         }
         
         // 触发断开事件
-        if let Some(handler) = &self.event_handler {
+        if let Some(handler) = &event_handler {
             handler.handle_connection_event(user_id, ConnectionEvent::Disconnected).await?;
         }
         
@@ -399,13 +425,17 @@ impl WebSocketConnectionHandler {
     /// 
     /// 处理客户端发送的心跳消息
     pub async fn handle_heartbeat(&self, user_id: &str, session_id: &str) -> Result<()> {
+        // 获取处理器
+        let message_handler = self.message_center.get_message_handler();
+        let event_handler = self.message_center.get_event_handler();
+        
         // 调用消息处理器
-        if let Some(handler) = &self.message_handler {
+        if let Some(handler) = &message_handler {
             handler.handle_heartbeat(user_id, session_id).await?;
         }
         
         // 触发心跳事件
-        if let Some(handler) = &self.event_handler {
+        if let Some(handler) = &event_handler {
             handler.handle_connection_event(user_id, ConnectionEvent::Heartbeat).await?;
         }
         
@@ -417,7 +447,7 @@ impl WebSocketConnectionHandler {
     /// 
     /// 验证客户端提供的认证令牌
     pub async fn validate_user_token(&self, token: &str) -> Result<Option<String>> {
-        if let Some(handler) = &self.auth_handler {
+        if let Some(handler) = self.message_center.get_auth_handler() {
             handler.validate_token(token).await
         } else {
             Ok(Some("anonymous".to_string())) // 如果没有认证处理器，默认允许匿名用户

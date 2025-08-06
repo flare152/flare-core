@@ -26,6 +26,7 @@ pub enum Platform {
     Web,
     Desktop,
     Server,
+    WebSocket,
     Unknown,
 }
 

@@ -8,6 +8,7 @@ pub mod events;
 pub mod protocol;
 pub mod traits;
 pub mod types;
+pub mod tls;
 
 // 重新导出常用类型
 pub use conn::{Connection, ConnectionEvent, ProtoMessage, Platform, ConnectionConfig};
@@ -15,4 +16,7 @@ pub use error::{Result, FlareError};
 pub use events::{ConnectionEvent as EventConnectionEvent, MessageEvent, AuthEvent, ErrorEvent, PerformanceEvent, SystemEvent};
 pub use protocol::Message;
 pub use traits::{ConnectionManager, MessageHandler, EventListener, AuthHandler};
-pub use types::{TransportProtocol, ConnectionStatus, ConnectionInfo}; 
+pub use types::{
+    TransportProtocol, ConnectionStatus, ConnectionInfo, 
+    ProtocolSelection
+}; 

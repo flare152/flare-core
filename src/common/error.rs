@@ -50,6 +50,9 @@ pub enum FlareError {
 
     #[error("资源耗尽: {0}")]
     ResourceExhausted(String),
+
+    #[error("通用错误: {0}")]
+    GeneralError(String),
 }
 
 /// 客户端错误类型
@@ -59,4 +62,16 @@ pub type ClientError = FlareError;
 pub type ServerError = FlareError;
 
 /// 结果类型别名
-pub type Result<T> = std::result::Result<T, FlareError>; 
+pub type Result<T> = std::result::Result<T, FlareError>;
+
+impl From<&str> for FlareError {
+    fn from(err: &str) -> Self {
+        FlareError::GeneralError(err.to_string())
+    }
+}
+
+impl From<String> for FlareError {
+    fn from(err: String) -> Self {
+        FlareError::GeneralError(err)
+    }
+} 

@@ -11,42 +11,9 @@
 //!
 //! ```toml
 //! [dependencies]
-//! flare-im = { version = "0.1", features = ["client", "server"] }
+//! flare-core = { version = "0.1", features = ["client", "server"] }
 //! ```
 //!
-//! ```rust
-//! // 客户端使用
-//! use flare_im::client::Client;
-//! use flare_im::common::TransportProtocol;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let client = Client::new("user123").await?;
-//!     let protocol = client.connect("flare-im://localhost").await?;
-//!     println!("连接成功，使用协议: {:?}", protocol);
-//!     Ok(())
-//! }
-//! ```
-//!
-//! ```rust
-//! // 服务端使用
-//! use flare_im::server::{FlareIMServer, FlareIMServerBuilder, ServerConfigBuilder};
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let config = ServerConfigBuilder::new()
-//!         .websocket_addr("127.0.0.1:8080".parse().unwrap())
-//!         .quic_addr("127.0.0.1:8081".parse().unwrap())
-//!         .build();
-//!     
-//!     let server = FlareIMServerBuilder::new()
-//!         .with_config(config)
-//!         .build();
-//!     
-//!     server.start().await?;
-//!     Ok(())
-//! }
-//! ```
 
 // 公共模块
 pub mod common;
@@ -65,7 +32,7 @@ pub use common::{
 };
 
 #[cfg(feature = "client")]
-pub use client::Client;
+pub use client::FlareIMClient;
 
 #[cfg(feature = "server")]
 pub use server::{FlareIMServer, FlareIMServerBuilder};

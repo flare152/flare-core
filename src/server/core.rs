@@ -4,11 +4,11 @@
 
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 
 use crate::common::{
     conn::{ConnectionEvent, ProtoMessage, Platform},
-    Result,
+    Result, ProtocolSelection,
 };
 
 use super::{
@@ -131,19 +131,55 @@ impl FlareIMServer {
         // 设置连接事件回调
         self.setup_connection_event_callback().await;
         
-        // 启动WebSocket服务器
-        if self.config.websocket.enabled {
-            self.start_websocket_server().await?;
+        // 根据协议选择启动相应的服务器
+        match self.config.protocol.selection {
+            ProtocolSelection::WebSocketOnly => {
+                self.start_websocket_server().await?;
+                info!("Flare IM 服务端已启动 (仅WebSocket)");
+            }
+            ProtocolSelection::QuicOnly => {
+                self.start_quic_server().await?;
+                info!("Flare IM 服务端已启动 (仅QUIC)");
+            }
+            ProtocolSelection::Both => {
+                if self.config.protocol.websocket.enabled {
+                    self.start_websocket_server().await?;
+                }
+                if self.config.protocol.quic.enabled {
+                    self.start_quic_server().await?;
+                }
+                info!("Flare IM 服务端已启动 (WebSocket + QUIC)");
+            }
+            ProtocolSelection::Auto => {
+                // 自动选择：优先QUIC，如果QUIC不可用则使用WebSocket
+                if self.config.protocol.quic.enabled {
+                    match self.start_quic_server().await {
+                        Ok(_) => {
+                            info!("Flare IM 服务端已启动 (自动选择: QUIC)");
+                        }
+                        Err(e) => {
+                            warn!("QUIC启动失败，回退到WebSocket: {}", e);
+                            if self.config.protocol.websocket.enabled {
+                                self.start_websocket_server().await?;
+                                info!("Flare IM 服务端已启动 (自动选择: WebSocket)");
+                            } else {
+                                return Err(e);
+                            }
+                        }
+                    }
+                } else if self.config.protocol.websocket.enabled {
+                    self.start_websocket_server().await?;
+                    info!("Flare IM 服务端已启动 (自动选择: WebSocket)");
+                } else {
+                    return Err(crate::common::FlareError::InvalidConfiguration(
+                        "自动模式下没有可用的协议".to_string()
+                    ));
+                }
+            }
         }
         
-        // 启动QUIC服务器
-        if self.config.quic.enabled {
-            self.start_quic_server().await?;
-        }
-        
-        info!("Flare IM 服务端已启动");
-        info!("WebSocket: {} (启用: {})", self.config.websocket.bind_addr, self.config.websocket.enabled);
-        info!("QUIC: {} (启用: {})", self.config.quic.bind_addr, self.config.quic.enabled);
+        // 显示启动信息
+        self.log_startup_info().await;
 
         Ok(())
     }
@@ -193,7 +229,10 @@ impl FlareIMServer {
         self.message_center.process_message(user_id, session_id, message).await
     }
 
-
+    /// 获取消息处理中心
+    pub fn get_message_center(&self) -> Arc<MessageProcessingCenter> {
+        Arc::clone(&self.message_center)
+    }
 
     /// 广播消息给所有用户
     pub async fn broadcast_message(&self, message: ProtoMessage) -> Result<usize> {
@@ -214,7 +253,7 @@ impl FlareIMServer {
     async fn setup_connection_event_callback(&self) {
         let message_center = Arc::clone(&self.message_center);
         
-        ServerConnectionManager::set_connection_event_callback(&*self.connection_manager, Box::new(move |user_id, event| {
+        let _ = ServerConnectionManager::set_connection_event_callback(&*self.connection_manager, Box::new(move |user_id, event| {
             let message_center = message_center.clone();
             
             tokio::spawn(async move {
@@ -260,7 +299,7 @@ impl FlareIMServer {
     
     /// 启动WebSocket服务器
     async fn start_websocket_server(&self) -> Result<()> {
-        let config = self.config.websocket.clone();
+        let config = self.config.protocol.websocket.clone();
         let connection_manager = Arc::clone(&self.connection_manager);
         let message_center = Arc::clone(&self.message_center);
         let running = Arc::clone(&self.running);
@@ -288,7 +327,7 @@ impl FlareIMServer {
     
     /// 启动QUIC服务器
     async fn start_quic_server(&self) -> Result<()> {
-        let config = self.config.quic.clone();
+        let config = self.config.protocol.quic.clone();
         let connection_manager = Arc::clone(&self.connection_manager);
         let message_center = Arc::clone(&self.message_center);
         let running = Arc::clone(&self.running);
@@ -312,6 +351,35 @@ impl FlareIMServer {
         }
         
         Ok(())
+    }
+    
+    /// 记录启动信息
+    async fn log_startup_info(&self) {
+        info!("协议选择: {}", self.config.protocol.selection);
+        
+        match self.config.protocol.selection {
+            ProtocolSelection::WebSocketOnly => {
+                info!("WebSocket: {} (启用: {})", 
+                    self.config.protocol.websocket.bind_addr, 
+                    self.config.protocol.websocket.enabled);
+            }
+            ProtocolSelection::QuicOnly => {
+                info!("QUIC: {} (启用: {})", 
+                    self.config.protocol.quic.bind_addr, 
+                    self.config.protocol.quic.enabled);
+            }
+            ProtocolSelection::Both => {
+                info!("WebSocket: {} (启用: {})", 
+                    self.config.protocol.websocket.bind_addr, 
+                    self.config.protocol.websocket.enabled);
+                info!("QUIC: {} (启用: {})", 
+                    self.config.protocol.quic.bind_addr, 
+                    self.config.protocol.quic.enabled);
+            }
+            ProtocolSelection::Auto => {
+                info!("自动模式: 优先QUIC，回退WebSocket");
+            }
+        }
     }
 }
 
@@ -338,6 +406,44 @@ impl FlareIMServerBuilder {
         self
     }
     
+    /// 设置协议选择
+    pub fn protocol_selection(mut self, selection: ProtocolSelection) -> Self {
+        self.config.protocol.selection = selection;
+        self
+    }
+    
+    /// 仅使用WebSocket
+    pub fn websocket_only(mut self) -> Self {
+        self.config.protocol.selection = ProtocolSelection::WebSocketOnly;
+        self.config.protocol.websocket.enabled = true;
+        self.config.protocol.quic.enabled = false;
+        self
+    }
+    
+    /// 仅使用QUIC
+    pub fn quic_only(mut self) -> Self {
+        self.config.protocol.selection = ProtocolSelection::QuicOnly;
+        self.config.protocol.websocket.enabled = false;
+        self.config.protocol.quic.enabled = true;
+        self
+    }
+    
+    /// 同时使用WebSocket和QUIC
+    pub fn both_protocols(mut self) -> Self {
+        self.config.protocol.selection = ProtocolSelection::Both;
+        self.config.protocol.websocket.enabled = true;
+        self.config.protocol.quic.enabled = true;
+        self
+    }
+    
+    /// 自动选择协议
+    pub fn auto_protocol(mut self) -> Self {
+        self.config.protocol.selection = ProtocolSelection::Auto;
+        self.config.protocol.websocket.enabled = true;
+        self.config.protocol.quic.enabled = true;
+        self
+    }
+    
     pub fn with_auth_handler(mut self, handler: Arc<dyn AuthHandler>) -> Self {
         self.auth_handler = Some(handler);
         self
@@ -354,22 +460,22 @@ impl FlareIMServerBuilder {
     }
 
     pub fn websocket_addr(mut self, addr: std::net::SocketAddr) -> Self {
-        self.config.websocket.bind_addr = addr;
+        self.config.protocol.websocket.bind_addr = addr.to_string();
         self
     }
 
     pub fn quic_addr(mut self, addr: std::net::SocketAddr) -> Self {
-        self.config.quic.bind_addr = addr;
+        self.config.protocol.quic.bind_addr = addr.to_string();
         self
     }
 
     pub fn enable_websocket(mut self, enabled: bool) -> Self {
-        self.config.websocket.enabled = enabled;
+        self.config.protocol.websocket.enabled = enabled;
         self
     }
 
     pub fn enable_quic(mut self, enabled: bool) -> Self {
-        self.config.quic.enabled = enabled;
+        self.config.protocol.quic.enabled = enabled;
         self
     }
 
@@ -385,6 +491,33 @@ impl FlareIMServerBuilder {
     
     pub fn log_level(mut self, level: String) -> Self {
         self.config.logging.level = level;
+        self
+    }
+    
+    /// 配置 WebSocket TLS
+    pub fn websocket_tls(mut self, cert_path: String, key_path: String) -> Self {
+        self.config.protocol.websocket.enable_tls = true;
+        self.config.protocol.websocket.cert_path = Some(cert_path);
+        self.config.protocol.websocket.key_path = Some(key_path);
+        self
+    }
+    
+    /// 配置 QUIC TLS 证书
+    pub fn quic_tls(mut self, cert_path: String, key_path: String) -> Self {
+        self.config.protocol.quic.cert_path = cert_path;
+        self.config.protocol.quic.key_path = key_path;
+        self
+    }
+    
+    /// 配置 QUIC ALPN 协议
+    pub fn quic_alpn(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
+        self.config.protocol.quic.alpn_protocols = alpn_protocols;
+        self
+    }
+    
+    /// 启用 QUIC 0-RTT
+    pub fn enable_quic_0rtt(mut self, enabled: bool) -> Self {
+        self.config.protocol.quic.enable_0rtt = enabled;
         self
     }
     

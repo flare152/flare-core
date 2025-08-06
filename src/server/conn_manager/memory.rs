@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tokio::sync::{RwLock, Mutex};
 use tokio::time::interval;
-use tracing::{info, warn, debug};        
+use tracing::{info, warn, debug, error};        
 
 use crate::common::{
     conn::{Connection, ConnectionEvent, ConnectionState, ProtoMessage},
@@ -316,39 +316,61 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
     ) -> Result<()> {
         let key = Self::connection_key(&user_id, &session_id);
         
+        info!("开始添加连接: 用户={}, 会话={}, 键={}", user_id, session_id, key);
+        
         // 检查连接数限制
-        let connections = self.connections.read().await;
-        if connections.len() >= self.config.max_connections {
-            return Err(FlareError::ResourceExhausted(
-                format!("连接数已达上限: {}", self.config.max_connections)
-            ));
+        {
+            let connections = self.connections.read().await;
+            let current_count = connections.len();
+            let max_connections = self.config.max_connections;
+            
+            info!("连接数检查: 当前={}, 最大={}", current_count, max_connections);
+            
+            if current_count >= max_connections {
+                let error_msg = format!("连接数已达上限: 当前={}, 最大={}", current_count, max_connections);
+                error!("{}", error_msg);
+                return Err(FlareError::ResourceExhausted(error_msg));
+            }
         }
+        
+        info!("连接数检查通过，开始创建连接记录");
         
         // 创建连接记录
         let record = MemoryConnectionRecord::new(connection, user_id.clone(), session_id.clone());
+        info!("连接记录创建成功");
         
         // 添加到连接存储
         {
+            info!("开始添加到连接存储");
             let mut connections_write = self.connections.write().await;
             connections_write.insert(key.clone(), record);
+            let new_count = connections_write.len();
+            info!("连接存储更新成功，当前连接数: {}", new_count);
         }
         
         // 更新用户会话映射
         {
+            info!("开始更新用户会话映射");
             let mut user_sessions_write = self.user_sessions.write().await;
             user_sessions_write
                 .entry(user_id.clone())
                 .or_insert_with(HashSet::new)
-                .insert(session_id);
+                .insert(session_id.clone());
+            let user_count = user_sessions_write.len();
+            info!("用户会话映射更新成功，当前在线用户数: {}", user_count);
         }
         
         // 更新统计信息
+        info!("开始更新统计信息");
         self.update_stats().await;
+        info!("统计信息更新完成");
         
         // 触发连接事件
-        self.trigger_event(user_id, ConnectionEvent::Connected).await;
+        info!("开始触发连接事件");
+        self.trigger_event(user_id.clone(), ConnectionEvent::Connected).await;
+        info!("连接事件触发完成");
         
-        debug!("添加连接: {}", key);
+        info!("连接添加成功: 用户={}, 会话={}, 键={}", user_id, session_id, key);
         Ok(())
     }
     

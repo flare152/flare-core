@@ -20,8 +20,8 @@ pub use conn_manager::{
 
 // 重新导出配置和处理器
 pub use config::{
-    ServerConfig, WebSocketConfig, QuicConfig, ConnectionManagerConfig,
-    AuthConfig, LoggingConfig, AuthMethod, ServerConfigBuilder
+    ServerConfig, ServerProtocolConfig, WebSocketServerConfig, QuicServerConfig,
+    ConnectionManagerConfig, AuthConfig, LoggingConfig, AuthMethod, ServerConfigBuilder
 };
 
 pub use handlers::{

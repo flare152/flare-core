@@ -9,8 +9,7 @@ use tracing::{info, warn, error, debug};
 use std::fs;
 use std::net::SocketAddr;
 use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
-use rustls::{Certificate, PrivateKey, ServerConfig as RustlsServerConfig};
-use rustls_pemfile::{certs, pkcs8_private_keys};
+use rustls::ServerConfig as RustlsServerConfig;
 
 use crate::common::{
     conn::{Connection, ConnectionEvent, ProtoMessage, Platform, ConnectionConfig},
@@ -18,36 +17,32 @@ use crate::common::{
 };
 
 use super::{
-    config::QuicConfig,
+    config::ServerConfig,
     handlers::{AuthHandler, MessageHandler, EventHandler},
     conn_manager::{MemoryServerConnectionManager, ServerConnectionManager},
+    message_center::MessageProcessingCenter,
 };
+use super::config::QuicServerConfig;
 
 /// QUIC服务器
 pub struct QuicServer {
-    config: QuicConfig,
+    config: QuicServerConfig,
     connection_manager: Arc<MemoryServerConnectionManager>,
-    auth_handler: Option<Arc<dyn AuthHandler>>,
-    message_handler: Option<Arc<dyn MessageHandler>>,
-    event_handler: Option<Arc<dyn EventHandler>>,
+    message_center: Arc<MessageProcessingCenter>,
     running: Arc<RwLock<bool>>,
 }
 
 impl QuicServer {
     pub fn new(
-        config: QuicConfig,
+        config: QuicServerConfig,
         connection_manager: Arc<MemoryServerConnectionManager>,
-        auth_handler: Option<Arc<dyn AuthHandler>>,
-        message_handler: Option<Arc<dyn MessageHandler>>,
-        event_handler: Option<Arc<dyn EventHandler>>,
+        message_center: Arc<MessageProcessingCenter>,
         running: Arc<RwLock<bool>>,
     ) -> Self {
         Self {
             config,
             connection_manager,
-            auth_handler,
-            message_handler,
-            event_handler,
+            message_center,
             running,
         }
     }
@@ -64,9 +59,7 @@ impl QuicServer {
         // 创建连接处理器
         let connection_handler = QuicConnectionHandler::new(
             self.connection_manager.clone(),
-            self.auth_handler.clone(),
-            self.message_handler.clone(),
-            self.event_handler.clone(),
+            self.message_center.clone(),
         );
         
         // 启动清理任务
@@ -131,8 +124,12 @@ impl QuicServer {
         // 加载TLS证书和私钥
         let server_config = self.load_tls_config().await?;
         
+        // 解析绑定地址
+        let bind_addr = self.config.bind_addr.parse::<std::net::SocketAddr>()
+            .map_err(|e| FlareError::InvalidConfiguration(format!("无效的绑定地址 {}: {}", self.config.bind_addr, e)))?;
+        
         // 创建QUIC端点
-        let endpoint = Endpoint::server(server_config, self.config.bind_addr)
+        let endpoint = Endpoint::server(server_config, bind_addr)
             .map_err(|e| FlareError::NetworkError(std::io::Error::new(std::io::ErrorKind::Other, format!("创建QUIC端点失败: {}", e))))?;
         
         Ok(endpoint)
@@ -140,47 +137,19 @@ impl QuicServer {
     
     /// 加载TLS配置
     async fn load_tls_config(&self) -> Result<QuinnServerConfig> {
-        // 读取证书文件
-        let cert_file = fs::read(&self.config.cert_path)
-            .map_err(|e| FlareError::InvalidConfiguration(format!("无法读取证书文件: {}", e)))?;
+        // 使用统一的TLS处理，支持自定义证书路径
+        let cert_path = &self.config.cert_path;
+        let key_path = &self.config.key_path;
         
-        // 读取私钥文件
-        let key_file = fs::read(&self.config.key_path)
-            .map_err(|e| FlareError::InvalidConfiguration(format!("无法读取私钥文件: {}", e)))?;
+        let server_config = crate::common::tls::create_server_config(cert_path, key_path)
+            .map_err(|e| FlareError::InvalidConfiguration(format!("创建服务端TLS配置失败: {}", e)))?;
         
-        // 解析证书
-        let certs: Vec<Certificate> = certs(&mut &cert_file[..])
-            .map_err(|e| FlareError::InvalidConfiguration(format!("解析证书失败: {}", e)))?
-            .into_iter()
-            .map(Certificate)
-            .collect();
+        // 应用传输层配置
+        let mut config = server_config;
+        let transport_config = crate::common::tls::create_transport_config();
+        config.transport_config(Arc::new(transport_config));
         
-        // 解析私钥
-        let keys: Vec<PrivateKey> = pkcs8_private_keys(&mut &key_file[..])
-            .map_err(|e| FlareError::InvalidConfiguration(format!("解析私钥失败: {}", e)))?
-            .into_iter()
-            .map(PrivateKey)
-            .collect();
-        
-        if keys.is_empty() {
-            return Err(FlareError::InvalidConfiguration("未找到有效的私钥".to_string()));
-        }
-        
-        // 创建Rustls服务器配置
-        let mut rustls_config = RustlsServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(certs, keys[0].clone())
-            .map_err(|e| FlareError::InvalidConfiguration(format!("创建TLS配置失败: {}", e)))?;
-        
-        // 配置QUIC
-        rustls_config.max_early_data_size = u32::MAX;
-        rustls_config.alpn_protocols = vec![b"flare-im".to_vec()];
-        
-        // 创建QUIC服务器配置
-        let server_config = QuinnServerConfig::with_crypto(Arc::new(rustls_config));
-        
-        Ok(server_config)
+        Ok(config)
     }
 }
 
@@ -193,23 +162,17 @@ impl QuicServer {
 #[derive(Clone)]
 pub struct QuicConnectionHandler {
     connection_manager: Arc<MemoryServerConnectionManager>,
-    auth_handler: Option<Arc<dyn AuthHandler>>,
-    message_handler: Option<Arc<dyn MessageHandler>>,
-    event_handler: Option<Arc<dyn EventHandler>>,
+    message_center: Arc<MessageProcessingCenter>,
 }
 
 impl QuicConnectionHandler {
     pub fn new(
         connection_manager: Arc<MemoryServerConnectionManager>,
-        auth_handler: Option<Arc<dyn AuthHandler>>,
-        message_handler: Option<Arc<dyn MessageHandler>>,
-        event_handler: Option<Arc<dyn EventHandler>>,
+        message_center: Arc<MessageProcessingCenter>,
     ) -> Self {
         Self {
             connection_manager,
-            auth_handler,
-            message_handler,
-            event_handler,
+            message_center,
         }
     }
     
@@ -223,12 +186,12 @@ impl QuicConnectionHandler {
     /// 5. 启动流处理循环
     pub async fn handle_new_connection(
         &self,
-        connecting: quinn::Connecting,
+        incoming: quinn::Incoming,
     ) -> Result<()> {
-        debug!("处理新的QUIC连接: {}", connecting.remote_address());
+        debug!("处理新的QUIC连接: {}", incoming.remote_address());
         
         // 接受连接
-        let connection = connecting.await
+        let connection = incoming.await
             .map_err(|e| FlareError::ConnectionFailed(format!("QUIC连接失败: {}", e)))?;
         
         let remote_addr = connection.remote_address();
@@ -247,8 +210,12 @@ impl QuicConnectionHandler {
             reconnect_delay_ms: 0,
         };
         
-        // 等待双向流
-        let (send_stream, recv_stream) = connection.accept_bi().await
+        // 等待双向流，添加超时处理
+        let (send_stream, recv_stream) = tokio::time::timeout(
+            Duration::from_secs(10),
+            connection.accept_bi()
+        ).await
+            .map_err(|_| FlareError::ConnectionFailed("等待QUIC双向流超时".to_string()))?
             .map_err(|e| FlareError::ConnectionFailed(format!("接受QUIC流失败: {}", e)))?;
         
         // 创建QUIC连接
@@ -257,7 +224,7 @@ impl QuicConnectionHandler {
             connection,
             send_stream,
             recv_stream,
-        );
+        ).await;
         
         // 启动接收任务
         quic_connection.start_receive_task().await?;
@@ -408,13 +375,17 @@ impl QuicConnectionHandler {
     /// 
     /// 在连接成功建立并认证后调用，触发相关事件
     pub async fn handle_connection_established(&self, user_id: &str, session_id: &str) -> Result<()> {
+        // 获取处理器
+        let event_handler = self.message_center.get_event_handler();
+        let message_handler = self.message_center.get_message_handler();
+        
         // 触发连接事件
-        if let Some(handler) = &self.event_handler {
+        if let Some(handler) = &event_handler {
             handler.handle_connection_event(user_id, ConnectionEvent::Connected).await?;
         }
         
         // 调用消息处理器
-        if let Some(handler) = &self.message_handler {
+        if let Some(handler) = &message_handler {
             handler.handle_user_connect(user_id, session_id, Platform::Unknown).await?;
         }
         
@@ -426,42 +397,25 @@ impl QuicConnectionHandler {
     /// 
     /// 处理接收到的消息，调用消息处理器并触发相关事件
     pub async fn handle_message_received(&self, user_id: &str, message: ProtoMessage) -> Result<ProtoMessage> {
-        // 触发消息接收事件
-        if let Some(handler) = &self.event_handler {
-            handler.handle_connection_event(user_id, ConnectionEvent::MessageReceived(message.clone())).await?;
-        }
-        
-        // 调用消息处理器
-        if let Some(handler) = &self.message_handler {
-            let response = handler.handle_message(user_id, message).await?;
-            
-            // 触发消息发送事件
-            if let Some(event_handler) = &self.event_handler {
-                event_handler.handle_connection_event(user_id, ConnectionEvent::MessageSent(response.clone())).await?;
-            }
-            
-            return Ok(response);
-        }
-        
-        // 默认echo响应
-        Ok(ProtoMessage::new(
-            uuid::Uuid::new_v4().to_string(),
-            "echo".to_string(),
-            message.payload,
-        ))
+        // 使用消息处理中心统一处理
+        self.message_center.process_message(user_id, "", message).await
     }
     
     /// 处理连接关闭
     /// 
     /// 在连接断开时调用，进行清理工作并触发相关事件
     pub async fn handle_connection_closed(&self, user_id: &str, session_id: &str) -> Result<()> {
+        // 获取处理器
+        let message_handler = self.message_center.get_message_handler();
+        let event_handler = self.message_center.get_event_handler();
+        
         // 调用消息处理器
-        if let Some(handler) = &self.message_handler {
+        if let Some(handler) = &message_handler {
             handler.handle_user_disconnect(user_id, session_id).await?;
         }
         
         // 触发断开事件
-        if let Some(handler) = &self.event_handler {
+        if let Some(handler) = &event_handler {
             handler.handle_connection_event(user_id, ConnectionEvent::Disconnected).await?;
         }
         
@@ -473,13 +427,17 @@ impl QuicConnectionHandler {
     /// 
     /// 处理客户端发送的心跳消息
     pub async fn handle_heartbeat(&self, user_id: &str, session_id: &str) -> Result<()> {
+        // 获取处理器
+        let message_handler = self.message_center.get_message_handler();
+        let event_handler = self.message_center.get_event_handler();
+        
         // 调用消息处理器
-        if let Some(handler) = &self.message_handler {
+        if let Some(handler) = &message_handler {
             handler.handle_heartbeat(user_id, session_id).await?;
         }
         
         // 触发心跳事件
-        if let Some(handler) = &self.event_handler {
+        if let Some(handler) = &event_handler {
             handler.handle_connection_event(user_id, ConnectionEvent::Heartbeat).await?;
         }
         
@@ -491,7 +449,7 @@ impl QuicConnectionHandler {
     /// 
     /// 验证客户端提供的认证令牌
     pub async fn validate_user_token(&self, token: &str) -> Result<Option<String>> {
-        if let Some(handler) = &self.auth_handler {
+        if let Some(handler) = self.message_center.get_auth_handler() {
             handler.validate_token(token).await
         } else {
             Ok(Some("anonymous".to_string())) // 如果没有认证处理器，默认允许匿名用户

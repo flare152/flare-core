@@ -328,7 +328,7 @@ pub struct QuicConnectionFactory;
 
 impl QuicConnectionFactory {
     /// 从QUIC连接创建连接实例
-    pub fn from_quinn_connection(
+    pub async fn from_quinn_connection(
         config: ConnectionConfig,
         connection: QuinnConnection,
         send_stream: SendStream,
@@ -336,12 +336,11 @@ impl QuicConnectionFactory {
     ) -> QuicConnection {
         let mut quic_conn = QuicConnection::new(config);
         
-        // 直接设置连接，不使用异步任务
-        // 注意：这里需要在实际使用中确保连接设置完成
-        // 暂时注释掉异步设置，避免移动问题
-        // tokio::spawn(async move {
-        //     quic_conn.set_quinn_connection(connection, send_stream, recv_stream).await;
-        // });
+        // 设置QUIC连接和流
+        quic_conn.set_quinn_connection(connection, send_stream, recv_stream).await;
+        
+        // 初始化消息通道
+        quic_conn.init_message_channels().await;
         
         quic_conn
     }

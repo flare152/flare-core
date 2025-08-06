@@ -2,8 +2,8 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-blue.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Crates.io](https://img.shields.io/crates/v/flare-im)](https://crates.io/crates/flare-im)
-[![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://docs.rs/flare-im)
+[![Crates.io](https://img.shields.io/crates/v/flare-core)](https://crates.io/crates/flare-core)
+[![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://docs.rs/flare-core)
 
 Flare IM 是一个基于 Rust 语言开发的高性能即时通讯工具包，采用 QUIC 协议和 WebSocket 技术，提供可扩展的架构设计。
 
@@ -25,7 +25,7 @@ Flare IM 是一个基于 Rust 语言开发的高性能即时通讯工具包，�
 
 ```toml
 [dependencies]
-flare-im = { version = "0.1", features = ["client", "server"] }
+flare-core = { version = "0.1", features = ["client", "server"] }
 ```
 
 ### 功能特性
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new("user123").await?;
     
     // 连接到服务器
-    let protocol = client.connect("flare-im://localhost").await?;
+    let protocol = client.connect("flare-core://localhost").await?;
     println!("连接成功，使用协议: {:?}", protocol);
     
     // 发送消息
@@ -135,7 +135,7 @@ let server = FlareIMServerBuilder::new()
 
 ## 📚 文档
 
-- [API 文档](https://docs.rs/flare-im)
+- [API 文档](https://docs.rs/flare-core)
 - [示例代码](./examples/)
 
 ## 🔧 配置
@@ -147,7 +147,7 @@ use flare_im::client::config::ClientConfig;
 
 let config = ClientConfig {
     user_id: "user123".to_string(),
-    server_url: "flare-im://localhost".to_string(),
+    server_url: "flare-core://localhost".to_string(),
     connection_timeout_ms: 30000,
     heartbeat_interval_ms: 30000,
     max_reconnect_attempts: 5,
@@ -197,6 +197,6 @@ Flare IM 采用模块化设计，主要包含以下模块：
 
 ## 🔗 相关链接
 
-- [Crates.io](https://crates.io/crates/flare-im)
-- [API 文档](https://docs.rs/flare-im)
-- [GitHub 仓库](https://github.com/your-username/flare-im) 
+- [Crates.io](https://crates.io/crates/flare-core)
+- [API 文档](https://docs.rs/flare-core)
+- [GitHub 仓库](https://github.com/your-username/flare-core) 
