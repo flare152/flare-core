@@ -148,7 +148,7 @@ curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Ke
 
 ```rust
 tracing_subscriber::fmt()
-    .with_env_filter("flare_im=debug,flare_im::server=debug,flare_im::client=debug")
+    .with_env_filter("flare_core=debug,flare_core::server=debug,flare_core::client=debug")
     .init();
 ```
 

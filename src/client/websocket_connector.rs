@@ -10,7 +10,7 @@ use crate::client::config::ClientConfig;
 use std::time::Duration;
 use tracing::{info, warn};
 use tokio_tungstenite::connect_async;
-use futures_util::SinkExt;
+
 use url::Url;
 
 /// WebSocket 连接器
@@ -76,7 +76,7 @@ impl WebSocketConnector {
         info!("尝试连接到 WebSocket URL: {}", url);
 
         // 设置连接超时
-        let connect_future = connect_async(url);
+        let connect_future = connect_async(url.as_str());
         let ws_stream = tokio::time::timeout(timeout, connect_future)
             .await
             .map_err(|_| "WebSocket 连接超时")?

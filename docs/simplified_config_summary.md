@@ -25,7 +25,7 @@ pub struct ServerAddresses {
 ### 创建服务器地址配置
 
 ```rust
-use flare_im::client::config::ServerAddresses;
+use flare_core::client::config::ServerAddresses;
 
 // 方式1：链式调用
 let addresses = ServerAddresses::new()
@@ -56,8 +56,8 @@ if let Some(ws_url) = addresses.get_protocol_url(TransportProtocol::WebSocket) {
 ### 1. 基础配置
 
 ```rust
-use flare_im::client::FlareIMClientBuilder;
-use flare_im::client::config::ServerAddresses;
+use flare_core::client::FlareIMClientBuilder;
+use flare_core::client::config::ServerAddresses;
 
 let server_addresses = ServerAddresses::new()
     .with_quic_url("flare-core://quic.example.com:8081".to_string())

@@ -3,7 +3,7 @@
 //! 演示如何使用FlareIMServer构建器和不同的协议选择
 
 use std::sync::Arc;
-use flare_im::{
+use flare_core::{
     server::{
         FlareIMServer, FlareIMServerBuilder,
         DefaultAuthHandler, DefaultMessageHandler, DefaultEventHandler,

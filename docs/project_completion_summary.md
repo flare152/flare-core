@@ -140,7 +140,7 @@ flare-core/
 
 ### WebSocket 客户端
 ```rust
-use flare_im::client::FlareIMClientBuilder;
+use flare_core::client::FlareIMClientBuilder;
 
 let client = FlareIMClientBuilder::new("user123".to_string())
     .server_addresses(

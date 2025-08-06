@@ -197,7 +197,7 @@ impl MemoryServerConnectionManager {
                 
                 // 移除断开的连接
                 for key in keys_to_remove {
-                    if let Some(record) = connections_write.remove(&key) {
+                    if let Some(_record) = connections_write.remove(&key) {
                         debug!("移除断开的连接: {}", key);
                     }
                 }
@@ -568,7 +568,7 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
         Ok(removed_count)
     }
     
-    async fn force_disconnect_user(&self, user_id: &str, reason: Option<String>) -> Result<usize> {
+    async fn force_disconnect_user(&self, user_id: &str, _reason: Option<String>) -> Result<usize> {
         let user_connections = self.get_user_connections(user_id).await?;
         let mut disconnected_count = 0;
         

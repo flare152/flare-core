@@ -51,7 +51,7 @@ QUIC 协议需要 TLS 证书：
 
 ```rust
 #[async_trait::async_trait]
-impl flare_im::server::MessageHandler for CustomMessageHandler {
+impl flare_core::server::MessageHandler for CustomMessageHandler {
     async fn handle_message(&self, user_id: &str, message: ProtoMessage) -> Result<ProtoMessage> {
         match message.message_type.as_str() {
             "chat" => {

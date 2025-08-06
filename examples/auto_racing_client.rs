@@ -2,12 +2,12 @@
 //!
 //! 展示如何使用 FlareIMClient 进行协议竞速自动选择最佳协议
 
-use flare_im::client::{
+use flare_core::client::{
     FlareIMClientBuilder, 
     config::{ProtocolSelectionMode, ServerAddresses, ProtocolRacingConfig, ProtocolWeights},
     types::{ClientEvent, ClientEventCallback},
 };
-use flare_im::common::{TransportProtocol, ProtoMessage};
+use flare_core::common::{TransportProtocol, ProtoMessage};
 use std::sync::Arc;
 use tracing::{info, warn, error, debug};
 
@@ -15,7 +15,7 @@ use tracing::{info, warn, error, debug};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化日志
     tracing_subscriber::fmt()
-        .with_env_filter("flare_im=info,flare_im::client=debug")
+        .with_env_filter("flare_core=info,flare_core::client=debug")
         .init();
 
     info!("🚀 启动协议竞速客户端示例");
@@ -190,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 
                 // 检查连接状态
                 let status = client.get_status().await;
-                if status != flare_im::client::connection_manager::ConnectionState::Connected {
+                if status != flare_core::client::connection_manager::ConnectionState::Connected {
                     warn!("连接状态异常: {:?}", status);
                 }
                 

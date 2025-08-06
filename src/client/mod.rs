@@ -21,7 +21,7 @@ use crate::client::{
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn};
 
 /// Flare IM 客户端
 pub struct FlareIMClient {

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn};
 
 /// 协议竞速器
 pub struct ProtocolRacer {
@@ -136,7 +136,7 @@ impl ProtocolRacer {
 
     /// 测试单个协议
     async fn test_protocol(&mut self, config: &ClientConfig, protocol: TransportProtocol) -> Result<ProtocolMetrics> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         let mut metrics = ProtocolMetrics::new(protocol);
         let mut successful_attempts = 0u64;
         let mut total_attempts = 0u64;
@@ -195,8 +195,8 @@ impl ProtocolRacer {
     }
 
     /// 测试连接
-    async fn test_connection(&self, server_url: &str, protocol: TransportProtocol) -> Result<()> {
-        let timeout = Duration::from_millis(self.race_timeout_ms);
+    async fn test_connection(&self, _server_url: &str, protocol: TransportProtocol) -> Result<()> {
+        let _timeout = Duration::from_millis(self.race_timeout_ms);
         
         match protocol {
             TransportProtocol::QUIC => {
@@ -221,7 +221,7 @@ impl ProtocolRacer {
     }
 
     /// 测试消息发送
-    async fn test_message_send(&self, server_url: &str, protocol: TransportProtocol, message: &ProtoMessage) -> Result<()> {
+    async fn test_message_send(&self, _server_url: &str, protocol: TransportProtocol, _message: &ProtoMessage) -> Result<()> {
         match protocol {
             TransportProtocol::QUIC => {
                 // 这里应该实现 QUIC 消息发送测试

@@ -2,7 +2,7 @@
 //!
 //! 用于诊断 WebSocket 连接和消息发送问题
 
-use flare_im::client::{
+use flare_core::client::{
     FlareIMClientBuilder, 
     config::{ProtocolSelectionMode, ServerAddresses},
     types::{ClientEvent, ClientEventCallback},
@@ -14,7 +14,7 @@ use tracing::{info, warn, error, debug};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化日志
     tracing_subscriber::fmt()
-        .with_env_filter("flare_im=debug")
+        .with_env_filter("flare_core=debug")
         .init();
 
     println!("🔍 WebSocket 连接诊断工具");
@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 创建客户端，指定使用 WebSocket 协议
     let mut client = FlareIMClientBuilder::new("diagnostic_user".to_string())
         .server_addresses(server_addresses)
-        .protocol_selection_mode(ProtocolSelectionMode::Specific(flare_im::common::TransportProtocol::WebSocket))
+        .protocol_selection_mode(ProtocolSelectionMode::Specific(flare_core::common::TransportProtocol::WebSocket))
         .connection_timeout(5000)
         .heartbeat_interval(30000)
         .max_reconnect_attempts(3)

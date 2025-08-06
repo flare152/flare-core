@@ -15,8 +15,8 @@ use crate::common::{
 };
 
 use super::{
-    config::ServerConfig,
-    handlers::{AuthHandler, MessageHandler, EventHandler},
+
+    handlers::{},
     conn_manager::{MemoryServerConnectionManager, ServerConnectionManager},
     message_center::MessageProcessingCenter,
 };
@@ -209,7 +209,7 @@ impl WebSocketConnectionHandler {
         };
         
         // 创建WebSocket连接
-        let mut ws_connection = crate::common::conn::websocket::WebSocketConnectionFactory::from_tungstenite_stream_plain(
+        let ws_connection = crate::common::conn::websocket::WebSocketConnectionFactory::from_tungstenite_stream_plain(
             config,
             ws_stream,
         );

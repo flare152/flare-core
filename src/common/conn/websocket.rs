@@ -290,7 +290,7 @@ impl WebSocketConnection {
                     let proto_msg = ProtoMessage::new(
                         uuid::Uuid::new_v4().to_string(),
                         "binary".to_string(),
-                        data,
+                        data.to_vec(),
                     );
                     callback(ConnectionEvent::MessageReceived(proto_msg));
                 }
@@ -350,7 +350,7 @@ impl Connection for WebSocketConnection {
                     FlareError::NetworkError(std::io::Error::new(std::io::ErrorKind::Other, e))
                 })?;
                 
-                let ws_msg = tokio_tungstenite::tungstenite::Message::Text(text);
+                let ws_msg = tokio_tungstenite::tungstenite::Message::Text(text.into());
                 match stream_enum {
                     WebSocketStreamEnum::MaybeTls(ws_stream) => {
                         match ws_stream.send(ws_msg).await {

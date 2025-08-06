@@ -328,7 +328,7 @@ server.start().await?;
 ```rust
 // 启用详细日志
 tracing_subscriber::fmt()
-    .with_env_filter("flare_im=debug")
+    .with_env_filter("flare_core=debug")
     .init();
 ```
 

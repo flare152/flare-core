@@ -27,7 +27,7 @@ pub struct ServerAddresses {
 ### 使用示例
 
 ```rust
-use flare_im::client::config::ServerAddresses;
+use flare_core::client::config::ServerAddresses;
 
 // 配置不同的服务器地址
 let addresses = ServerAddresses::new()
@@ -62,7 +62,7 @@ pub enum ProtocolSelectionMode {
 
 **示例：**
 ```rust
-use flare_im::client::config::ProtocolSelectionMode;
+use flare_core::client::config::ProtocolSelectionMode;
 
 let client = FlareIMClientBuilder::new("user123".to_string())
     .server_addresses(addresses)
@@ -84,7 +84,7 @@ let client = FlareIMClientBuilder::new("user123".to_string())
 
 **示例：**
 ```rust
-use flare_im::common::TransportProtocol;
+use flare_core::common::TransportProtocol;
 
 let client = FlareIMClientBuilder::new("user456".to_string())
     .server_addresses(addresses)
@@ -139,7 +139,7 @@ pub struct ProtocolWeights {
 ### 使用示例
 
 ```rust
-use flare_im::client::config::{ProtocolRacingConfig, ProtocolWeights};
+use flare_core::client::config::{ProtocolRacingConfig, ProtocolWeights};
 
 // 创建协议权重配置
 let weights = ProtocolWeights::new()
@@ -179,7 +179,7 @@ pub struct TlsConfig {
 ### 使用示例
 
 ```rust
-use flare_im::client::config::TlsConfig;
+use flare_core::client::config::TlsConfig;
 
 // 创建 TLS 配置
 let tls_config = TlsConfig::new(true)  // 验证服务器证书
@@ -201,8 +201,8 @@ let client = FlareIMClientBuilder::new("user_tls".to_string())
 ### 基础配置
 
 ```rust
-use flare_im::client::FlareIMClientBuilder;
-use flare_im::client::config::{ServerAddresses, ProtocolSelectionMode};
+use flare_core::client::FlareIMClientBuilder;
+use flare_core::client::config::{ServerAddresses, ProtocolSelectionMode};
 
 let server_addresses = ServerAddresses::new()
     .with_quic_url("flare-core://quic.example.com:8081".to_string())
@@ -220,8 +220,8 @@ let client = FlareIMClientBuilder::new("user123".to_string())
 ### 高级配置
 
 ```rust
-use flare_im::client::FlareIMClientBuilder;
-use flare_im::client::config::{
+use flare_core::client::FlareIMClientBuilder;
+use flare_core::client::config::{
     ServerAddresses, ProtocolSelectionMode, ProtocolRacingConfig, 
     ProtocolWeights, TlsConfig
 };

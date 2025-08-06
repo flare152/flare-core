@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
-use tracing::{info, error, debug, warn};
+use tracing::{info, error, warn};
 
 use crate::common::{
     conn::{ConnectionEvent, ProtoMessage, Platform},
@@ -12,8 +12,8 @@ use crate::common::{
 };
 
 use super::{
-    config::{ServerConfig, ConnectionManagerConfig},
-    handlers::{AuthHandler, MessageHandler, EventHandler, DefaultAuthHandler, DefaultMessageHandler, DefaultEventHandler},
+    config::{ServerConfig},
+    handlers::{AuthHandler, MessageHandler, EventHandler},
     conn_manager::{
         MemoryServerConnectionManager, ServerConnectionManagerStats, 
         ServerConnectionManagerConfig, ServerConnectionManager

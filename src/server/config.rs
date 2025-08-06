@@ -3,7 +3,7 @@
 //! 提供服务端配置管理功能
 
 use std::net::SocketAddr;
-use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 use crate::common::ProtocolSelection;

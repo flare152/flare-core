@@ -39,8 +39,8 @@ flare-core = { version = "0.1", features = ["client", "server"] }
 ### 客户端使用
 
 ```rust
-use flare_im::client::Client;
-use flare_im::common::TransportProtocol;
+use flare_core::client::Client;
+use flare_core::common::TransportProtocol;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -62,8 +62,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### 服务端使用
 
 ```rust
-use flare_im::server::{FlareIMServer, FlareIMServerBuilder};
-use flare_im::server::config::ServerConfigBuilder;
+use flare_core::server::{FlareIMServer, FlareIMServerBuilder};
+use flare_core::server::config::ServerConfigBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -91,15 +91,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### 自定义消息处理器
 
 ```rust
-use flare_im::server::handlers::{MessageHandler, EventHandler};
-use flare_im::common::conn::{ProtoMessage, Platform, ConnectionEvent};
+use flare_core::server::handlers::{MessageHandler, EventHandler};
+use flare_core::common::conn::{ProtoMessage, Platform, ConnectionEvent};
 use async_trait::async_trait;
 
 struct MyMessageHandler;
 
 #[async_trait]
 impl MessageHandler for MyMessageHandler {
-    async fn handle_message(&self, user_id: &str, message: ProtoMessage) -> Result<ProtoMessage, flare_im::Result> {
+    async fn handle_message(&self, user_id: &str, message: ProtoMessage) -> Result<ProtoMessage, flare_core::Result> {
         println!("收到来自用户 {} 的消息: {:?}", user_id, message);
         
         // 返回响应
@@ -110,17 +110,17 @@ impl MessageHandler for MyMessageHandler {
         ))
     }
     
-    async fn handle_user_connect(&self, user_id: &str, session_id: &str, platform: Platform) -> Result<(), flare_im::Result> {
+    async fn handle_user_connect(&self, user_id: &str, session_id: &str, platform: Platform) -> Result<(), flare_core::Result> {
         println!("用户 {} 连接，会话: {}，平台: {:?}", user_id, session_id, platform);
         Ok(())
     }
     
-    async fn handle_user_disconnect(&self, user_id: &str, session_id: &str) -> Result<(), flare_im::Result> {
+    async fn handle_user_disconnect(&self, user_id: &str, session_id: &str) -> Result<(), flare_core::Result> {
         println!("用户 {} 断开，会话: {}", user_id, session_id);
         Ok(())
     }
     
-    async fn handle_heartbeat(&self, user_id: &str, session_id: &str) -> Result<(), flare_im::Result> {
+    async fn handle_heartbeat(&self, user_id: &str, session_id: &str) -> Result<(), flare_core::Result> {
         println!("用户 {} 心跳，会话: {}", user_id, session_id);
         Ok(())
     }
@@ -143,7 +143,7 @@ let server = FlareIMServerBuilder::new()
 ### 客户端配置
 
 ```rust
-use flare_im::client::config::ClientConfig;
+use flare_core::client::config::ClientConfig;
 
 let config = ClientConfig {
     user_id: "user123".to_string(),
@@ -159,7 +159,7 @@ let config = ClientConfig {
 ### 服务端配置
 
 ```rust
-use flare_im::server::config::ServerConfigBuilder;
+use flare_core::server::config::ServerConfigBuilder;
 
 let config = ServerConfigBuilder::new()
     .websocket_addr("127.0.0.1:8080".parse().unwrap())

@@ -12,7 +12,7 @@ use quinn::{Connection as QuinnConnection, SendStream, RecvStream};
 
 use crate::common::{
     conn::{Connection, ProtoMessage, Platform, ConnectionConfig, ConnectionState},
-    Result, FlareError, TransportProtocol,
+    Result, FlareError,
 };
 
 /// QUIC连接实现
@@ -106,7 +106,7 @@ impl QuicConnection {
         
         let recv_stream = Arc::clone(&self.recv_stream);
         let message_sender = self.message_sender.as_ref().unwrap().clone();
-        let session_id = self.session_id.clone();
+        let _session_id = self.session_id.clone();
         let running = Arc::clone(&self.running);
         
         let task = tokio::spawn(async move {
@@ -156,7 +156,7 @@ impl QuicConnection {
     pub async fn start_heartbeat_task(&mut self) -> Result<()> {
         let interval_ms = self.config.heartbeat_interval_ms;
         let send_stream = Arc::clone(&self.send_stream);
-        let session_id = self.session_id.clone();
+        let _session_id = self.session_id.clone();
         let running = Arc::clone(&self.running);
         
         let task = tokio::spawn(async move {
@@ -234,7 +234,7 @@ impl Connection for QuicConnection {
         "QUIC"
     }
 
-    async fn is_active(&self, timeout: Duration) -> bool {
+    async fn is_active(&self, _timeout: Duration) -> bool {
         // 检查连接状态和最后活动时间
         let state = self.state.read().await;
         *state == ConnectionState::Connected

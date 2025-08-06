@@ -23,7 +23,7 @@ Flare IM 支持 TLS 加密通信，特别是 QUIC 协议必须使用 TLS。本�
 ### 2. 服务器配置
 
 ```rust
-use flare_im::server::{FlareIMServerBuilder, DefaultAuthHandler, DefaultMessageHandler, DefaultEventHandler};
+use flare_core::server::{FlareIMServerBuilder, DefaultAuthHandler, DefaultMessageHandler, DefaultEventHandler};
 
 let server = FlareIMServerBuilder::new()
     .websocket_addr("127.0.0.1:8080".parse()?)
@@ -46,7 +46,7 @@ let server = FlareIMServerBuilder::new()
 ### 3. 客户端配置
 
 ```rust
-use flare_im::client::{FlareIMClientBuilder, TransportProtocol};
+use flare_core::client::{FlareIMClientBuilder, TransportProtocol};
 
 let client = FlareIMClientBuilder::new(
     "user_001".to_string(),
@@ -202,7 +202,7 @@ QUIC 服务器必须配置 TLS 证书：
 
 ```rust
 use std::sync::Arc;
-use flare_im::server::{
+use flare_core::server::{
     FlareIMServerBuilder, 
     DefaultAuthHandler, 
     DefaultMessageHandler, 
@@ -213,7 +213,7 @@ use flare_im::server::{
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化日志
     tracing_subscriber::fmt()
-        .with_env_filter("flare_im=info")
+        .with_env_filter("flare_core=info")
         .init();
 
     // 构建服务器
@@ -248,13 +248,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### 完整客户端示例
 
 ```rust
-use flare_im::client::{FlareIMClientBuilder, TransportProtocol};
+use flare_core::client::{FlareIMClientBuilder, TransportProtocol};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化日志
     tracing_subscriber::fmt()
-        .with_env_filter("flare_im=info")
+        .with_env_filter("flare_core=info")
         .init();
 
     // 创建客户端

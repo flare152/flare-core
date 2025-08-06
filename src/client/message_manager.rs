@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
 use tokio::time::{Duration, interval};
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn};
 
 /// 消息管理器
 pub struct MessageManager {

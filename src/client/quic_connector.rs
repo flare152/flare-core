@@ -10,10 +10,7 @@ use crate::client::config::ClientConfig;
 use std::time::Duration;
 use tracing::{info, warn};
 use quinn::{Endpoint, ClientConfig as QuinnClientConfig};
-use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
-use std::fs;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 /// QUIC 连接器
 pub struct QuicConnector {
