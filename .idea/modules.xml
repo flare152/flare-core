@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/flare-im.iml" filepath="$PROJECT_DIR$/.idea/flare-im.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/flare-core.iml" filepath="$PROJECT_DIR$/.idea/flare-core.iml" />
     </modules>
   </component>
 </project>

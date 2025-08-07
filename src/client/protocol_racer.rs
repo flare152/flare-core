@@ -2,7 +2,7 @@
 //!
 //! 实现协议竞速功能，优先使用 QUIC，自动降级到 WebSocket
 
-use crate::common::{TransportProtocol, Result, ProtoMessage};
+use crate::common::{TransportProtocol, Result, UnifiedProtocolMessage};
 use crate::client::{
     config::{ClientConfig, ProtocolRacingConfig, ProtocolWeights},
     types::{ProtocolMetrics, ClientEvent},
@@ -163,11 +163,7 @@ impl ProtocolRacer {
         for i in 0..self.test_message_count {
             total_attempts += 1;
             
-            let test_message = ProtoMessage::new(
-                uuid::Uuid::new_v4().to_string(),
-                "ping".to_string(),
-                format!("test_message_{}", i).into_bytes(),
-            );
+            let test_message = UnifiedProtocolMessage::text(format!("test_message_{}", i));
 
             let msg_start = Instant::now();
             if let Ok(_) = self.test_message_send(&server_url, protocol, &test_message).await {
@@ -221,7 +217,7 @@ impl ProtocolRacer {
     }
 
     /// 测试消息发送
-    async fn test_message_send(&self, _server_url: &str, protocol: TransportProtocol, _message: &ProtoMessage) -> Result<()> {
+    async fn test_message_send(&self, _server_url: &str, protocol: TransportProtocol, _message: &UnifiedProtocolMessage) -> Result<()> {
         match protocol {
             TransportProtocol::QUIC => {
                 // 这里应该实现 QUIC 消息发送测试

@@ -2,7 +2,7 @@
 //!
 //! 管理消息发送、接收、重试等功能
 
-use crate::common::{Result, ProtoMessage};
+use crate::common::{Result, UnifiedProtocolMessage};
 use crate::client::{
     config::ClientConfig,
     types::{SendResult, MessageQueueItem, MessagePriority, ClientEvent, ClientEventCallback},
@@ -90,11 +90,7 @@ impl MessageManager {
 
     /// 发送文本消息
     pub async fn send_text_message(&self, target_user_id: &str, content: &str) -> Result<SendResult> {
-        let message = ProtoMessage::new(
-            uuid::Uuid::new_v4().to_string(),
-            "text".to_string(),
-            content.as_bytes().to_vec(),
-        );
+        let message = UnifiedProtocolMessage::text(content.to_string());
 
         self.send_message(target_user_id, message, MessagePriority::Normal).await
     }
@@ -106,11 +102,7 @@ impl MessageManager {
         data: Vec<u8>,
         message_type: String,
     ) -> Result<SendResult> {
-        let message = ProtoMessage::new(
-            uuid::Uuid::new_v4().to_string(),
-            message_type,
-            data,
-        );
+        let message = UnifiedProtocolMessage::binary(data);
 
         self.send_message(target_user_id, message, MessagePriority::Normal).await
     }
@@ -119,10 +111,11 @@ impl MessageManager {
     pub async fn send_message(
         &self,
         target_user_id: &str,
-        message: ProtoMessage,
+        message: UnifiedProtocolMessage,
         priority: MessagePriority,
     ) -> Result<SendResult> {
-        let message_id = message.id.clone();
+        // TODO: 修复消息ID生成和队列管理
+        let message_id = uuid::Uuid::new_v4().to_string();
 
         // 检查连接状态
         let connection_manager = self.connection_manager.lock().await;
@@ -136,9 +129,10 @@ impl MessageManager {
 
         // 创建消息队列项
         let queue_item = MessageQueueItem::new(
+            message_id.clone(),
             message.clone(),
             target_user_id.to_string(),
-            message.message_type.clone(),
+            "message".to_string(), // TODO: 从消息中提取类型
             self.config.message_retry_count,
             priority,
         );
@@ -157,8 +151,6 @@ impl MessageManager {
                 // 发送成功，从队列中移除
                 self.remove_message_from_queue(&message_id).await;
                 
-                // 统计已移除，直接触发事件
-
                 // 触发消息发送事件
                 self.trigger_event(ClientEvent::MessageSent(message_id.clone())).await;
 
@@ -173,7 +165,7 @@ impl MessageManager {
     }
 
     /// 尝试发送消息
-    async fn try_send_message(&self, message: &ProtoMessage, _target_user_id: &str) -> Result<()> {
+    async fn try_send_message(&self, message: &UnifiedProtocolMessage, _target_user_id: &str) -> Result<()> {
         // 获取连接管理器
         let connection_manager = self.connection_manager.lock().await;
         
@@ -189,7 +181,7 @@ impl MessageManager {
     /// 从队列中移除消息
     async fn remove_message_from_queue(&self, message_id: &str) {
         let mut queue = self.message_queue.write().await;
-        queue.retain(|item| item.message.id != message_id);
+        queue.retain(|item| item.message_id != message_id);
     }
 
     /// 启动消息处理任务
@@ -245,12 +237,12 @@ impl MessageManager {
         for item in queue.iter_mut() {
             // 检查是否可以重试
             if !item.can_retry() {
-                processed_items.push(item.message.id.clone());
+                processed_items.push(item.message_id.clone());
                 
                 // 触发消息失败事件
                 if let Some(callback) = event_callback {
                     callback(ClientEvent::MessageFailed(
-                        item.message.id.clone(),
+                        item.message_id.clone(),
                         "达到最大重试次数".to_string(),
                     ));
                 }
@@ -266,10 +258,10 @@ impl MessageManager {
             // 发送消息
             match conn_manager.send_message(item.message.clone()).await {
                 Ok(_) => {
-                    processed_items.push(item.message.id.clone());
+                    processed_items.push(item.message_id.clone());
                     
                     if let Some(callback) = event_callback {
-                        callback(ClientEvent::MessageSent(item.message.id.clone()));
+                        callback(ClientEvent::MessageSent(item.message_id.clone()));
                     }
                 }
                 Err(_) => {
@@ -282,12 +274,12 @@ impl MessageManager {
 
         // 移除已处理的消息
         for message_id in processed_items {
-            queue.retain(|item| item.message.id != message_id);
+            queue.retain(|item| item.message_id != message_id);
         }
     }
 
     /// 接收消息
-    pub async fn receive_message(&self, message: ProtoMessage) -> Result<()> {
+    pub async fn receive_message(&self, message: UnifiedProtocolMessage) -> Result<()> {
         // 触发消息接收事件
         self.trigger_event(ClientEvent::MessageReceived(message)).await;
 

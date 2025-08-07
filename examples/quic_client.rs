@@ -7,7 +7,7 @@ use flare_core::client::{
     config::{ProtocolSelectionMode, ServerAddresses},
     types::{ClientEvent, ClientEventCallback},
 };
-use flare_core::common::{TransportProtocol, ProtoMessage};
+use flare_core::common::{TransportProtocol, UnifiedProtocolMessage};
 use std::sync::Arc;
 use tracing::{info, warn, error, debug};
 
@@ -39,9 +39,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 error!("[QUIC] 连接错误: {}", error_msg);
             }
             ClientEvent::MessageReceived(message) => {
-                info!("[QUIC] 收到消息: ID={}, 类型={}, 内容={}", 
-                      message.id, message.message_type, 
-                      String::from_utf8_lossy(&message.payload));
+                info!("[QUIC] 收到消息: 类型={:?}, 内容={}", 
+                      message.t, 
+                      String::from_utf8_lossy(&message.c));
             }
             ClientEvent::MessageSent(message_id) => {
                 info!("[QUIC] 消息发送成功: {}", message_id);
@@ -114,8 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // 发送自定义消息
             info!("发送自定义消息...");
-            let custom_message = ProtoMessage::new(
-                uuid::Uuid::new_v4().to_string(),
+            let custom_message = UnifiedProtocolMessage::custom_message(
                 "custom".to_string(),
                 serde_json::json!({
                     "type": "custom",

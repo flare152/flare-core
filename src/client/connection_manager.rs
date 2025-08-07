@@ -8,16 +8,10 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{info, error};
 
 use crate::common::{
-    conn::{Connection, ConnectionEvent},
-    error::{Result, FlareError},
-    TransportProtocol,
+    conn::Connection,
+    Result, FlareError, TransportProtocol,
 };
-use crate::client::{
-    config::{ClientConfig, ProtocolSelectionMode},
-    websocket_connector::WebSocketConnector,
-    quic_connector::QuicConnector,
-    protocol_racer::ProtocolRacer,
-};
+use crate::server::conn_manager::memory::ConnectionEvent;
 
 /// 连接状态
 #[derive(Debug, Clone, PartialEq)]
@@ -31,7 +25,7 @@ pub enum ConnectionState {
 
 /// 连接管理器
 pub struct ConnectionManager {
-    config: ClientConfig,
+    config: crate::client::config::ClientConfig,
     state: Arc<RwLock<ConnectionState>>,
     current_connection: Arc<Mutex<Option<Box<dyn Connection + Send + Sync>>>>,
     last_connection_time: Arc<RwLock<Option<Instant>>>,
@@ -41,7 +35,7 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     /// 创建新的连接管理器
-    pub fn new(config: ClientConfig) -> Self {
+    pub fn new(config: crate::client::config::ClientConfig) -> Self {
         Self {
             config,
             state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
@@ -53,8 +47,8 @@ impl ConnectionManager {
     }
 
     /// 设置事件回调
-    pub fn set_event_callback(&mut self, callback: Box<dyn Fn(ConnectionEvent) + Send + Sync>) {
-        let mut callback_guard = self.event_callback.blocking_lock();
+    pub async fn set_event_callback(&mut self, callback: Box<dyn Fn(ConnectionEvent) + Send + Sync>) {
+        let mut callback_guard = self.event_callback.lock().await;
         *callback_guard = Some(callback);
     }
 
@@ -76,13 +70,13 @@ impl ConnectionManager {
         }
 
         match self.config.protocol_selection_mode {
-            ProtocolSelectionMode::AutoRacing => {
+            crate::client::config::ProtocolSelectionMode::AutoRacing => {
                 self.connect_with_racing().await
             }
-            ProtocolSelectionMode::Specific(protocol) => {
+            crate::client::config::ProtocolSelectionMode::Specific(protocol) => {
                 self.connect_with_protocol(protocol).await
             }
-            ProtocolSelectionMode::Manual => {
+            crate::client::config::ProtocolSelectionMode::Manual => {
                 Err(FlareError::ConnectionFailed("手动模式需要用户选择协议".to_string()))
             }
         }
@@ -92,7 +86,7 @@ impl ConnectionManager {
     async fn connect_with_racing(&mut self) -> Result<()> {
         info!("使用协议竞速模式连接");
         
-        let mut racer = ProtocolRacer::new();
+        let mut racer = crate::client::protocol_racer::ProtocolRacer::new();
         let best_protocol = racer.race_protocols(&self.config).await?;
         
         info!("协议竞速完成，选择协议: {:?}", best_protocol);
@@ -151,7 +145,7 @@ impl ConnectionManager {
             .or_else(|| self.config.server_addresses.websocket_tls_url.as_ref())
             .ok_or_else(|| FlareError::ConnectionFailed("未配置 WebSocket 地址".to_string()))?;
 
-        let connector = WebSocketConnector::new(self.config.clone());
+        let connector = crate::client::websocket_connector::WebSocketConnector::new(self.config.clone());
         let timeout = Duration::from_millis(self.config.connection_timeout_ms);
         
         connector.create_connection(ws_url, timeout).await
@@ -164,7 +158,7 @@ impl ConnectionManager {
         let quic_url = self.config.server_addresses.quic_url.as_ref()
             .ok_or_else(|| FlareError::ConnectionFailed("未配置 QUIC 地址".to_string()))?;
 
-        let connector = QuicConnector::new(self.config.clone());
+        let connector = crate::client::quic_connector::QuicConnector::new(self.config.clone());
         let timeout = Duration::from_millis(self.config.connection_timeout_ms);
         
         connector.create_connection(quic_url, timeout).await
@@ -239,9 +233,9 @@ impl ConnectionManager {
     }
 
     /// 发送消息
-    pub async fn send_message(&self, message: crate::common::conn::ProtoMessage) -> Result<()> {
-        let connection = self.current_connection.lock().await;
-        if let Some(ref conn) = *connection {
+    pub async fn send_message(&self, message: crate::common::protocol::UnifiedProtocolMessage) -> Result<()> {
+        let connection_guard = self.current_connection.lock().await;
+        if let Some(ref conn) = *connection_guard {
             conn.send(message).await
         } else {
             Err(FlareError::ConnectionFailed("未连接".to_string()))

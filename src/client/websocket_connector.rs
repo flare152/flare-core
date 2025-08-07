@@ -3,8 +3,9 @@
 //! 负责创建和管理 WebSocket 连接
 
 use crate::common::{
-    TransportProtocol, Result, ProtoMessage,
-    conn::{Connection, Platform, ConnectionBuilder},
+    TransportProtocol, Result, UnifiedProtocolMessage,
+    conn::{Connection, ConnectionBuilder},
+    types::Platform,
 };
 use crate::client::config::ClientConfig;
 use std::time::Duration;
@@ -42,7 +43,6 @@ impl WebSocketConnector {
             .platform(Platform::Desktop)
             .protocol(TransportProtocol::WebSocket)
             .timeout_ms(self.config.connection_timeout_ms)
-            .heartbeat_interval_ms(self.config.heartbeat_interval_ms)
             .max_reconnect_attempts(self.config.max_reconnect_attempts)
             .reconnect_delay_ms(self.config.reconnect_delay_ms)
             .build();
@@ -89,11 +89,7 @@ impl WebSocketConnector {
     /// 验证连接
     pub async fn validate_connection(&self, connection: &Box<dyn Connection + Send + Sync>) -> Result<bool> {
         // 发送 ping 消息测试连接
-        let ping_message = ProtoMessage::new(
-            uuid::Uuid::new_v4().to_string(),
-            "ping".to_string(),
-            b"ping".to_vec(),
-        );
+        let ping_message = UnifiedProtocolMessage::text("ping".to_string());
 
         match connection.send(ping_message).await {
             Ok(_) => {

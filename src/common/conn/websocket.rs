@@ -7,49 +7,74 @@ use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::Duration;
 use futures_util::{SinkExt, StreamExt};
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 use async_trait::async_trait;
 
 use crate::common::{
-    conn::{Connection, ConnectionConfig, ConnectionState, Platform, ProtoMessage, ConnectionStats, ConnectionEvent},
+    conn::{Connection, ConnectionConfig, ConnectionStats}, 
     error::{Result, FlareError},
+    MessageParser, MessageCallback
 };
+use crate::common::types::{Platform, ConnectionStatus, TransportProtocol};
+use crate::common::protocol::UnifiedProtocolMessage;
 
-/// WebSocket连接 - 支持普通TCP和TLS两种模式
+/// WebSocket连接实现
+/// 
+/// 提供基于WebSocket协议的连接功能，包括：
+/// - 消息发送和接收
+/// - 连接状态管理
+/// - 元数据管理
+/// - 异步任务管理
 pub struct WebSocketConnection {
+    /// 连接配置
     config: ConnectionConfig,
-    state: Arc<RwLock<ConnectionState>>,
+    /// 连接状态
+    state: Arc<RwLock<ConnectionStatus>>,
+    /// 连接统计信息
     stats: Arc<RwLock<ConnectionStats>>,
+    /// 最后活动时间
     last_activity: Arc<RwLock<Instant>>,
-    event_callback: Arc<Mutex<Option<Box<dyn Fn(ConnectionEvent) + Send + Sync>>>>,
-    
-    // WebSocket特定字段
+    /// 会话ID
     session_id: String,
-    
-    // WebSocket流 - 使用枚举支持两种类型
+    /// WebSocket流 - 使用枚举支持两种类型
     ws_stream: Arc<Mutex<Option<WebSocketStreamEnum>>>,
-    
-    // 接收任务
+    /// 接收任务句柄
     receive_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// 运行状态
+    running: Arc<RwLock<bool>>,
+    /// 消息解析器
+    message_parser: Arc<MessageParser>,
 }
 
 /// WebSocket流枚举 - 支持两种类型
+#[derive(Debug)]
 enum WebSocketStreamEnum {
     MaybeTls(tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>),
     Plain(tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>),
 }
 
-impl std::fmt::Debug for WebSocketConnection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WebSocketConnection")
-            .field("config", &self.config)
-            .field("state", &self.state)
-            .field("session_id", &self.session_id)
-            .finish()
-    }
-}
+
 
 impl WebSocketConnection {
+    /// 创建新的WebSocket连接
+    pub fn new(config: ConnectionConfig) -> Self {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        
+        debug!("创建新的WebSocket连接: {} - {}", config.id, session_id);
+        
+        Self {
+            config,
+            state: Arc::new(RwLock::new(ConnectionStatus::Disconnected)),
+            stats: Arc::new(RwLock::new(ConnectionStats::default())),
+            last_activity: Arc::new(RwLock::new(Instant::now())),
+            session_id,
+            ws_stream: Arc::new(Mutex::new(None)),
+            receive_task: Arc::new(Mutex::new(None)),
+            running: Arc::new(RwLock::new(false)),
+            message_parser: Arc::new(MessageParser::with_default_callbacks()),
+        }
+    }
+    
     /// 从现有的tokio-tungstenite连接创建WebSocket连接（MaybeTlsStream）
     pub fn from_tungstenite_stream(
         config: ConnectionConfig,
@@ -57,15 +82,18 @@ impl WebSocketConnection {
     ) -> Self {
         let session_id = uuid::Uuid::new_v4().to_string();
         
+        debug!("从TLS WebSocket流创建连接: {} - {}", config.id, session_id);
+        
         Self {
             config,
-            state: Arc::new(RwLock::new(ConnectionState::Connected)),
+            state: Arc::new(RwLock::new(ConnectionStatus::Connected)),
             stats: Arc::new(RwLock::new(ConnectionStats::default())),
             last_activity: Arc::new(RwLock::new(Instant::now())),
-            event_callback: Arc::new(Mutex::new(None)),
             session_id,
             ws_stream: Arc::new(Mutex::new(Some(WebSocketStreamEnum::MaybeTls(ws_stream)))),
             receive_task: Arc::new(Mutex::new(None)),
+            running: Arc::new(RwLock::new(false)),
+            message_parser: Arc::new(MessageParser::with_default_callbacks()),
         }
     }
     
@@ -76,78 +104,73 @@ impl WebSocketConnection {
     ) -> Self {
         let session_id = uuid::Uuid::new_v4().to_string();
         
+        debug!("从普通WebSocket流创建连接: {} - {}", config.id, session_id);
+        
         Self {
             config,
-            state: Arc::new(RwLock::new(ConnectionState::Connected)),
+            state: Arc::new(RwLock::new(ConnectionStatus::Connected)),
             stats: Arc::new(RwLock::new(ConnectionStats::default())),
             last_activity: Arc::new(RwLock::new(Instant::now())),
-            event_callback: Arc::new(Mutex::new(None)),
             session_id,
             ws_stream: Arc::new(Mutex::new(Some(WebSocketStreamEnum::Plain(ws_stream)))),
             receive_task: Arc::new(Mutex::new(None)),
+            running: Arc::new(RwLock::new(false)),
+            message_parser: Arc::new(MessageParser::with_default_callbacks()),
         }
     }
     
-    /// 创建新的WebSocket连接（用于测试）
-    pub fn new(config: ConnectionConfig) -> Self {
-        let session_id = uuid::Uuid::new_v4().to_string();
+    /// 设置WebSocket流
+    pub async fn set_ws_stream(
+        &mut self,
+        ws_stream: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    ) {
+        debug!("设置TLS WebSocket流: {}", self.session_id);
         
-        Self {
-            config,
-            state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
-            stats: Arc::new(RwLock::new(ConnectionStats::default())),
-            last_activity: Arc::new(RwLock::new(Instant::now())),
-            event_callback: Arc::new(Mutex::new(None)),
-            session_id,
-            ws_stream: Arc::new(Mutex::new(None)),
-            receive_task: Arc::new(Mutex::new(None)),
+        {
+            let mut stream_guard = self.ws_stream.lock().await;
+            *stream_guard = Some(WebSocketStreamEnum::MaybeTls(ws_stream));
         }
-    }
-    
-    /// 设置事件回调
-    pub fn set_event_callback(&mut self, callback: Box<dyn Fn(ConnectionEvent) + Send + Sync>) {
-        let mut callback_guard = self.event_callback.blocking_lock();
-        *callback_guard = Some(callback);
-    }
-    
-    /// 触发事件
-    async fn trigger_event(&self, event: ConnectionEvent) {
-        if let Some(callback) = &*self.event_callback.lock().await {
-            callback(event);
-        }
-    }
-    
-    /// 更新活动时间
-    async fn update_activity(&self) {
-        let mut activity = self.last_activity.write().await;
-        *activity = Instant::now();
-    }
-    
-    /// 更新统计信息
-    async fn update_stats(&self, bytes_sent: u64, bytes_received: u64) {
-        let mut stats = self.stats.write().await;
-        stats.bytes_sent += bytes_sent;
-        stats.bytes_received += bytes_received;
-        stats.last_activity = chrono::Utc::now();
         
-        if bytes_sent > 0 {
-            stats.messages_sent += 1;
+        // 更新连接状态
+        {
+            let mut state = self.state.write().await;
+            *state = ConnectionStatus::Connected;
         }
-        if bytes_received > 0 {
-            stats.messages_received += 1;
-        }
+        
+        info!("TLS WebSocket流已设置: {}", self.session_id);
     }
     
-    /// 获取连接统计
-    pub async fn get_stats(&self) -> ConnectionStats {
-        let stats = self.stats.read().await;
-        stats.clone()
+    /// 设置普通WebSocket流
+    pub async fn set_ws_stream_plain(
+        &mut self,
+        ws_stream: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    ) {
+        debug!("设置普通WebSocket流: {}", self.session_id);
+        
+        {
+            let mut stream_guard = self.ws_stream.lock().await;
+            *stream_guard = Some(WebSocketStreamEnum::Plain(ws_stream));
+        }
+        
+        // 更新连接状态
+        {
+            let mut state = self.state.write().await;
+            *state = ConnectionStatus::Connected;
+        }
+        
+        info!("普通WebSocket流已设置: {}", self.session_id);
     }
     
-    /// 获取连接状态
-    pub async fn get_state(&self) -> ConnectionState {
-        let state = self.state.read().await;
-        state.clone()
+    /// 解析消息
+    fn parse_message(data: &[u8]) -> Result<UnifiedProtocolMessage> {
+        serde_json::from_slice(data)
+            .map_err(|e| FlareError::protocol_error(format!("解析WebSocket消息失败: {}", e)))
+    }
+    
+    /// 序列化消息
+    fn serialize_message(message: &UnifiedProtocolMessage) -> Result<Vec<u8>> {
+        serde_json::to_vec(message)
+            .map_err(|e| FlareError::protocol_error(format!("序列化WebSocket消息失败: {}", e)))
     }
     
     /// 获取会话ID
@@ -155,164 +178,36 @@ impl WebSocketConnection {
         &self.session_id
     }
     
-    /// 检查是否有WebSocket流
-    pub async fn has_ws_stream(&self) -> bool {
-        let stream_guard = self.ws_stream.lock().await;
-        stream_guard.is_some()
+    /// 获取连接ID
+    pub fn get_connection_id(&self) -> &str {
+        &self.config.id
     }
     
-    /// 启动接收任务
-    pub async fn start_receive_task(&self) -> Result<()> {
-        let mut stream_guard = self.ws_stream.lock().await;
-        if let Some(ws_stream_enum) = stream_guard.take() {
-            drop(stream_guard);
-            
-            let session_id = self.session_id.clone();
-            let stats = Arc::clone(&self.stats);
-            let activity = Arc::clone(&self.last_activity);
-            let event_callback = Arc::clone(&self.event_callback);
-            let state = Arc::clone(&self.state);
-            let ws_stream_arc = Arc::new(Mutex::new(ws_stream_enum));
-            
-            let task = tokio::spawn(async move {
-                info!("开始WebSocket接收任务: {}", session_id);
-                
-                loop {
-                    let msg_result = {
-                        let mut stream = ws_stream_arc.lock().await;
-                        match &mut *stream {
-                            WebSocketStreamEnum::MaybeTls(ws_stream) => ws_stream.next().await,
-                            WebSocketStreamEnum::Plain(ws_stream) => ws_stream.next().await,
-                        }
-                    };
-                    
-                    match msg_result {
-                        Some(Ok(msg)) => {
-                            if let Err(e) = Self::handle_websocket_message(
-                                msg, &session_id, &stats, &activity, &event_callback
-                            ).await {
-                                error!("处理WebSocket消息失败: {}", e);
-                                break;
-                            }
-                        }
-                        Some(Err(e)) => {
-                            error!("WebSocket接收错误: {}", e);
-                            break;
-                        }
-                        None => {
-                            info!("WebSocket连接已关闭");
-                            break;
-                        }
-                    }
-                }
-                
-                // 更新连接状态
-                {
-                    let mut state_guard = state.write().await;
-                    *state_guard = ConnectionState::Disconnected;
-                }
-                
-                // 触发断开连接事件
-                if let Some(callback) = &*event_callback.lock().await {
-                    callback(ConnectionEvent::Disconnected);
-                }
-                
-                info!("WebSocket接收任务结束: {}", session_id);
-            });
-            
-            let mut task_guard = self.receive_task.lock().await;
-            *task_guard = Some(task);
-            
-            Ok(())
-        } else {
-            Err(FlareError::ConnectionFailed("WebSocket流不可用".to_string()))
-        }
+    /// 获取连接状态
+    pub async fn get_status(&self) -> ConnectionStatus {
+        let state = self.state.read().await;
+        *state
     }
     
-    /// 处理WebSocket消息
-    async fn handle_websocket_message(
-        msg: tokio_tungstenite::tungstenite::Message,
-        session_id: &str,
-        stats: &Arc<RwLock<ConnectionStats>>,
-        activity: &Arc<RwLock<Instant>>,
-        event_callback: &Arc<Mutex<Option<Box<dyn Fn(ConnectionEvent) + Send + Sync>>>>,
-    ) -> Result<()> {
-        info!("收到WebSocket消息: {:?}", msg);
-        match msg {
-            tokio_tungstenite::tungstenite::Message::Text(text) => {
-                debug!("收到WebSocket文本消息: {}", text);
-                
-                // 更新活动时间
-                {
-                    let mut activity_guard = activity.write().await;
-                    *activity_guard = Instant::now();
-                }
-                
-                // 更新统计信息
-                {
-                    let mut stats_guard = stats.write().await;
-                    stats_guard.bytes_received += text.len() as u64;
-                    stats_guard.messages_received += 1;
-                    stats_guard.last_activity = chrono::Utc::now();
-                }
-                
-                // 解析消息并触发事件
-                match serde_json::from_str::<ProtoMessage>(&text) {
-                    Ok(proto_msg) => {
-                        if let Some(callback) = &*event_callback.lock().await {
-                            callback(ConnectionEvent::MessageReceived(proto_msg));
-                        }
-                    }
-                    Err(e) => {
-                        warn!("解析WebSocket消息失败: {}", e);
-                    }
-                }
-            }
-            tokio_tungstenite::tungstenite::Message::Binary(data) => {
-                debug!("收到WebSocket二进制消息: {} bytes", data.len());
-                
-                // 更新活动时间
-                {
-                    let mut activity_guard = activity.write().await;
-                    *activity_guard = Instant::now();
-                }
-                
-                // 更新统计信息
-                {
-                    let mut stats_guard = stats.write().await;
-                    stats_guard.bytes_received += data.len() as u64;
-                    stats_guard.messages_received += 1;
-                    stats_guard.last_activity = chrono::Utc::now();
-                }
-                
-                // 触发二进制消息事件
-                if let Some(callback) = &*event_callback.lock().await {
-                    let proto_msg = ProtoMessage::new(
-                        uuid::Uuid::new_v4().to_string(),
-                        "binary".to_string(),
-                        data.to_vec(),
-                    );
-                    callback(ConnectionEvent::MessageReceived(proto_msg));
-                }
-            }
-            tokio_tungstenite::tungstenite::Message::Ping(data) => {
-                debug!("收到WebSocket Ping: {} bytes", data.len());
-                // 可以在这里处理心跳
-            }
-            tokio_tungstenite::tungstenite::Message::Pong(data) => {
-                debug!("收到WebSocket Pong: {} bytes", data.len());
-                // 可以在这里处理心跳响应
-            }
-            tokio_tungstenite::tungstenite::Message::Close(frame) => {
-                info!("收到WebSocket关闭消息: {:?}", frame);
-                // 连接将被关闭
-            }
-            tokio_tungstenite::tungstenite::Message::Frame(_) => {
-                // 忽略原始帧
-            }
-        }
-        
-        Ok(())
+    /// 设置消息解析器
+    pub async fn set_message_parser(&mut self, parser: Arc<MessageParser>) {
+        self.message_parser = parser;
+    }
+}
+
+impl std::fmt::Debug for WebSocketConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebSocketConnection")
+            .field("config", &self.config)
+            .field("session_id", &self.session_id)
+            .field("state", &"<Arc<RwLock<ConnectionStatus>>>")
+            .field("stats", &"<Arc<RwLock<ConnectionStats>>>")
+            .field("last_activity", &"<Arc<RwLock<Instant>>>")
+            .field("ws_stream", &"<Arc<Mutex<Option<WebSocketStreamEnum>>>>")
+            .field("receive_task", &"<Arc<Mutex<Option<JoinHandle<()>>>>>")
+            .field("running", &"<Arc<RwLock<bool>>>")
+            .field("message_parser", &"<Arc<MessageParser>>")
+            .finish()
     }
 }
 
@@ -330,75 +225,208 @@ impl Connection for WebSocketConnection {
         Platform::WebSocket
     }
     
-    fn protocol(&self) -> &str {
-        "websocket"
+    fn protocol(&self) -> TransportProtocol {
+        TransportProtocol::WebSocket
     }
     
     async fn is_active(&self, _timeout: Duration) -> bool {
         let state = self.state.read().await;
-        matches!(state.clone(), ConnectionState::Connected)
+        *state == ConnectionStatus::Connected
     }
     
-    fn send(&self, msg: ProtoMessage) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+    fn send(&self, msg: UnifiedProtocolMessage) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
         let ws_stream = Arc::clone(&self.ws_stream);
-        let session_id = self.session_id.clone();
-        
+        let stats = Arc::clone(&self.stats);
+        let last_activity = Arc::clone(&self.last_activity);
         Box::pin(async move {
             let mut stream_guard = ws_stream.lock().await;
-            if let Some(ref mut stream_enum) = *stream_guard {
-                let text = serde_json::to_string(&msg).map_err(|e| {
-                    FlareError::NetworkError(std::io::Error::new(std::io::ErrorKind::Other, e))
-                })?;
+            if let Some(ref mut stream_enum) = &mut *stream_guard {
+                let data = Self::serialize_message(&msg)?;
+                let data_len = data.len();
+                let ws_msg = tungstenite::Message::Binary(data.into());
                 
-                let ws_msg = tokio_tungstenite::tungstenite::Message::Text(text.into());
                 match stream_enum {
                     WebSocketStreamEnum::MaybeTls(ws_stream) => {
-                        match ws_stream.send(ws_msg).await {
-                            Ok(_) => {
-                                info!("WebSocket消息发送成功: {}", session_id);
-                                Ok(())
-                            }
-                            Err(e) => {
-                                error!("WebSocket消息发送失败: {}", e);
-                                Err(FlareError::NetworkError(std::io::Error::new(std::io::ErrorKind::Other, e)))
-                            }
+                        ws_stream.send(ws_msg).await
+                            .map_err(|e| FlareError::message_send_failed(format!("发送消息失败: {}", e)))?;
+                        
+                        // 更新最后活跃时间和统计信息
+                        {
+                            let mut stats_guard = stats.write().await;
+                            stats_guard.last_activity = chrono::Utc::now();
+                            stats_guard.bytes_sent += data_len as u64;
+                            stats_guard.messages_sent += 1;
                         }
+                        
+                        {
+                            let mut activity_guard = last_activity.write().await;
+                            *activity_guard = Instant::now();
+                        }
+                        
+                        debug!("WebSocket消息已发送: {:?}", msg);
+                        Ok(())
                     }
                     WebSocketStreamEnum::Plain(ws_stream) => {
-                        match ws_stream.send(ws_msg).await {
-                            Ok(_) => {
-                                info!("WebSocket消息发送成功: {}", session_id);
-                                Ok(())
-                            }
-                            Err(e) => {
-                                error!("WebSocket消息发送失败: {}", e);
-                                Err(FlareError::NetworkError(std::io::Error::new(std::io::ErrorKind::Other, e)))
-                            }
+                        ws_stream.send(ws_msg).await
+                            .map_err(|e| FlareError::message_send_failed(format!("发送消息失败: {}", e)))?;
+                        
+                        // 更新最后活跃时间和统计信息
+                        {
+                            let mut stats_guard = stats.write().await;
+                            stats_guard.last_activity = chrono::Utc::now();
+                            stats_guard.bytes_sent += data_len as u64;
+                            stats_guard.messages_sent += 1;
                         }
+                        
+                        {
+                            let mut activity_guard = last_activity.write().await;
+                            *activity_guard = Instant::now();
+                        }
+                        
+                        debug!("WebSocket消息已发送: {:?}", msg);
+                        Ok(())
                     }
                 }
             } else {
-                Err(FlareError::ConnectionFailed("WebSocket流不可用".to_string()))
+                Err(FlareError::connection_failed("WebSocket流未设置"))
             }
         })
     }
     
-    fn receive(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ProtoMessage>> + Send + '_>> {
-        // 简化：直接返回错误，因为消息通过事件回调处理
+    fn start_receive_task(&self, callback: Box<dyn Fn(UnifiedProtocolMessage) + Send + Sync>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        let ws_stream = Arc::clone(&self.ws_stream);
+        let running = Arc::clone(&self.running);
+        let stats = Arc::clone(&self.stats);
+        let last_activity = Arc::clone(&self.last_activity);
+        let message_parser = Arc::clone(&self.message_parser);
+        let session_id = self.session_id.clone();
+        
         Box::pin(async move {
-            Err(FlareError::ConnectionFailed("消息通过事件回调处理".to_string()))
+            let mut running_guard = running.write().await;
+            if *running_guard {
+                debug!("WebSocket接收任务已在运行: {}", session_id);
+                return Ok(()); // 任务已经在运行
+            }
+            *running_guard = true;
+            drop(running_guard);
+            
+            let session_id_clone = session_id.clone();
+            let task = tokio::spawn(async move {
+                debug!("WebSocket接收任务开始运行: {}", session_id_clone);
+                while *running.read().await {
+                    let mut stream_guard = ws_stream.lock().await;
+                    if let Some(stream_enum) = &mut *stream_guard {
+                        let msg_result = match stream_enum {
+                            WebSocketStreamEnum::MaybeTls(ws_stream) => ws_stream.next().await,
+                            WebSocketStreamEnum::Plain(ws_stream) => ws_stream.next().await,
+                        };
+                        
+                        match msg_result {
+                            Some(Ok(msg)) => {
+                                match msg {
+                                   tungstenite::Message::Binary(data) => {
+                                        // 更新最后活跃时间和统计信息
+                                        {
+                                            let data_len = data.len();
+                                            let mut stats_guard = stats.write().await;
+                                            stats_guard.last_activity = chrono::Utc::now();
+                                            stats_guard.bytes_received += data_len as u64;
+                                            stats_guard.messages_received += 1;
+                                        }
+                                        
+                                        {
+                                            let mut activity_guard = last_activity.write().await;
+                                            *activity_guard = Instant::now();
+                                        }
+                                        
+                                        // 使用消息解析器处理消息
+                                        match message_parser.handle_message(session_id.clone(), &data).await {
+                                            Ok(()) => {
+                                                debug!("WebSocket消息已通过解析器处理");
+                                            }
+                                            Err(e) => {
+                                                error!("WebSocket消息解析失败: {}", e);
+                                                // 如果解析失败，创建自定义消息
+                                                let custom_msg = UnifiedProtocolMessage::custom_message(
+                                                    "binary_data".to_string(),
+                                                    data.to_vec()
+                                                );
+                                                debug!("WebSocket接收到自定义二进制消息");
+                                                callback(custom_msg);
+                                            }
+                                        }
+                                    }
+                                    tungstenite::Message::Close(_) => {
+                                        debug!("WebSocket接收流结束: {}", session_id);
+                                        break;
+                                    }
+                                    _ => {
+                                        // 忽略其他类型的消息
+                                        continue;
+                                    }
+                                }
+                            }
+                            Some(Err(e)) => {
+                                error!("读取WebSocket流失败: {} - {}", session_id, e);
+                                break;
+                            }
+                            None => {
+                                debug!("WebSocket接收流结束: {}", session_id);
+                                break;
+                            }
+                        }
+                    } else {
+                        error!("WebSocket接收流未设置: {}", session_id);
+                        break;
+                    }
+                }
+                debug!("WebSocket接收任务结束: {}", session_id);
+            });
+            {
+                let mut task_guard = self.receive_task.lock().await;
+                *task_guard = Some(task);
+            }
+            Ok(())
         })
     }
     
     fn close(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
-        let state = Arc::clone(&self.state);
-        let event_callback = Arc::clone(&self.event_callback);
         let ws_stream = Arc::clone(&self.ws_stream);
+        let running = Arc::clone(&self.running);
         let receive_task = Arc::clone(&self.receive_task);
+        let state = Arc::clone(&self.state);
+        let config_id = self.config.id.clone();
         let session_id = self.session_id.clone();
         
         Box::pin(async move {
-            // 停止接收任务
+            debug!("开始关闭WebSocket连接: {} - {}", config_id, session_id);
+            
+            // 发送连接关闭事件
+            let unified_msg = UnifiedProtocolMessage::disconnect(
+                config_id.clone(),
+                session_id.clone(),
+                "Connection closed by client".to_string()
+            );
+            
+            // 尝试发送连接关闭事件
+            let res = self.send(unified_msg).await;
+            if res.is_err() {
+                error!("发送连接关闭事件失败: {} - {}", config_id, session_id);
+            }
+            
+            // 更新状态
+            {
+                let mut state_guard = state.write().await;
+                *state_guard = ConnectionStatus::Disconnected;
+            }
+            
+            // 停止运行
+            {
+                let mut running_guard = running.write().await;
+                *running_guard = false;
+            }
+            
+            // 停止任务
             {
                 let mut task_guard = receive_task.lock().await;
                 if let Some(task) = task_guard.take() {
@@ -406,36 +434,7 @@ impl Connection for WebSocketConnection {
                 }
             }
             
-            // 关闭WebSocket连接
-            if let Some(mut stream_enum) = ws_stream.lock().await.take() {
-                let close_msg = tokio_tungstenite::tungstenite::Message::Close(None);
-                match &mut stream_enum {
-                    WebSocketStreamEnum::MaybeTls(ws_stream) => {
-                        if let Err(e) = ws_stream.send(close_msg).await {
-                            error!("发送WebSocket关闭消息失败: {}", e);
-                        }
-                    }
-                    WebSocketStreamEnum::Plain(ws_stream) => {
-                        if let Err(e) = ws_stream.send(close_msg).await {
-                            error!("发送WebSocket关闭消息失败: {}", e);
-                        }
-                    }
-                }
-                debug!("关闭WebSocket连接: {}", session_id);
-            }
-            
-            // 更新状态
-            {
-                let mut state_guard = state.write().await;
-                *state_guard = ConnectionState::Disconnected;
-            }
-            
-            // 触发事件
-            if let Some(callback) = &*event_callback.lock().await {
-                callback(ConnectionEvent::Disconnected);
-            }
-            
-            info!("WebSocket连接已关闭: {}", session_id);
+            info!("WebSocket连接已断开: {} - {}", config_id, session_id);
             Ok(())
         })
     }
@@ -446,10 +445,31 @@ impl Connection for WebSocketConnection {
             state: Arc::clone(&self.state),
             stats: Arc::clone(&self.stats),
             last_activity: Arc::clone(&self.last_activity),
-            event_callback: Arc::clone(&self.event_callback),
             session_id: self.session_id.clone(),
             ws_stream: Arc::clone(&self.ws_stream),
             receive_task: Arc::clone(&self.receive_task),
+            running: Arc::clone(&self.running),
+            message_parser: Arc::clone(&self.message_parser),
+        })
+    }
+    
+    fn update_last_activity(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        let stats = Arc::clone(&self.stats);
+        let last_activity = Arc::clone(&self.last_activity);
+        Box::pin(async move {
+            let mut stats_guard = stats.write().await;
+            stats_guard.last_activity = chrono::Utc::now();
+            
+            let mut activity_guard = last_activity.write().await;
+            *activity_guard = Instant::now();
+        })
+    }
+    
+    fn get_last_activity(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = chrono::DateTime<chrono::Utc>> + Send + '_>> {
+        let stats = Arc::clone(&self.stats);
+        Box::pin(async move {
+            let stats_guard = stats.read().await;
+            stats_guard.last_activity
         })
     }
 }

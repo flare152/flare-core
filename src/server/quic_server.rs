@@ -10,15 +10,14 @@ use std::net::SocketAddr;
 use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
 
 use crate::common::{
-    conn::{Connection, ConnectionEvent, ProtoMessage, Platform, ConnectionConfig},
+    conn::{Connection, ConnectionConfig},
     Result, FlareError, TransportProtocol,
+    types::Platform,
+    MessageParser,
 };
 
 use super::{
-
-    handlers::{},
     conn_manager::{MemoryServerConnectionManager, ServerConnectionManager},
-    message_center::MessageProcessingCenter,
 };
 use super::config::QuicServerConfig;
 
@@ -26,27 +25,31 @@ use super::config::QuicServerConfig;
 pub struct QuicServer {
     config: QuicServerConfig,
     connection_manager: Arc<MemoryServerConnectionManager>,
-    message_center: Arc<MessageProcessingCenter>,
+    message_parser: Arc<MessageParser>,
     running: Arc<RwLock<bool>>,
+    server_task: Option<tokio::task::JoinHandle<()>>,
+    cleanup_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl QuicServer {
     pub fn new(
         config: QuicServerConfig,
         connection_manager: Arc<MemoryServerConnectionManager>,
-        message_center: Arc<MessageProcessingCenter>,
+        message_parser: Arc<MessageParser>,
         running: Arc<RwLock<bool>>,
     ) -> Self {
         Self {
             config,
             connection_manager,
-            message_center,
+            message_parser,
             running,
+            server_task: None,
+            cleanup_task: None,
         }
     }
     
     /// 启动QUIC服务器
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start(&mut self) -> Result<()> {
         info!("启动QUIC服务器: {}", self.config.bind_addr);
         
         // 创建QUIC端点
@@ -57,7 +60,7 @@ impl QuicServer {
         // 创建连接处理器
         let connection_handler = QuicConnectionHandler::new(
             self.connection_manager.clone(),
-            self.message_center.clone(),
+            self.message_parser.clone(),
         );
         
         // 启动清理任务
@@ -103,13 +106,34 @@ impl QuicServer {
             })
         };
         
-        // 等待服务器停止
-        tokio::select! {
-            _ = server_task => {
-                info!("QUIC服务器任务已结束");
+        // 保存任务句柄
+        self.server_task = Some(server_task);
+        self.cleanup_task = Some(cleanup_task);
+        
+        info!("QUIC服务器已启动");
+        Ok(())
+    }
+    
+    /// 停止QUIC服务器
+    pub async fn stop(&mut self) -> Result<()> {
+        info!("停止QUIC服务器");
+        
+        // 设置停止标志
+        {
+            let mut running = self.running.write().await;
+            *running = false;
+        }
+        
+        // 等待任务完成
+        if let Some(task) = self.server_task.take() {
+            if let Err(e) = task.await {
+                warn!("QUIC服务器任务异常结束: {}", e);
             }
-            _ = cleanup_task => {
-                info!("QUIC清理任务已结束");
+        }
+        
+        if let Some(task) = self.cleanup_task.take() {
+            if let Err(e) = task.await {
+                warn!("QUIC清理任务异常结束: {}", e);
             }
         }
         
@@ -128,7 +152,7 @@ impl QuicServer {
         
         // 创建QUIC端点
         let endpoint = Endpoint::server(server_config, bind_addr)
-            .map_err(|e| FlareError::NetworkError(std::io::Error::new(std::io::ErrorKind::Other, format!("创建QUIC端点失败: {}", e))))?;
+            .map_err(|e| FlareError::NetworkError(format!("创建QUIC端点失败: {}", e)))?;
         
         Ok(endpoint)
     }
@@ -160,17 +184,17 @@ impl QuicServer {
 #[derive(Clone)]
 pub struct QuicConnectionHandler {
     connection_manager: Arc<MemoryServerConnectionManager>,
-    message_center: Arc<MessageProcessingCenter>,
+    message_parser: Arc<MessageParser>,
 }
 
 impl QuicConnectionHandler {
     pub fn new(
         connection_manager: Arc<MemoryServerConnectionManager>,
-        message_center: Arc<MessageProcessingCenter>,
+        message_parser: Arc<MessageParser>,
     ) -> Self {
         Self {
             connection_manager,
-            message_center,
+            message_parser,
         }
     }
     
@@ -203,7 +227,6 @@ impl QuicConnectionHandler {
             platform: Platform::Unknown, // QUIC连接的平台信息需要从客户端获取
             protocol: TransportProtocol::QUIC,
             timeout_ms: 300_000, // 5分钟
-            heartbeat_interval_ms: 30_000, // 30秒
             max_reconnect_attempts: 0, // 服务端不需要重连
             reconnect_delay_ms: 0,
         };
@@ -223,9 +246,6 @@ impl QuicConnectionHandler {
             send_stream,
             recv_stream,
         ).await;
-        
-        // 启动接收任务
-        quic_connection.start_receive_task().await?;
         
         // 等待认证
         let user_id = self.wait_for_authentication(&mut quic_connection).await?;
@@ -257,19 +277,37 @@ impl QuicConnectionHandler {
         let timeout = Duration::from_secs(30); // 30秒认证超时
         let start = std::time::Instant::now();
         
+        // 使用通道来接收认证消息
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        
+        // 启动接收任务
+        let tx_clone = tx.clone();
+        connection.start_receive_task(Box::new(move |msg| {
+            let tx = tx_clone.clone();
+            tokio::spawn(async move {
+                // 将UnifiedProtocolMessage转换为Vec<u8>
+                let msg_data = serde_json::to_vec(&msg).unwrap_or_default();
+                let _ = tx.send(msg_data).await;
+            });
+        })).await?;
+        
         while start.elapsed() < timeout {
             // 尝试接收认证消息
-            match connection.receive().await {
-                Ok(message) => {
+            match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+                Ok(Some(message_data)) => {
                     // 解析认证消息
-                    if let Some(user_id) = self.parse_auth_message(&message).await? {
+                    if let Some(user_id) = self.parse_auth_message(&message_data).await? {
                         info!("用户认证成功: {}", user_id);
                         return Ok(user_id);
                     }
                 }
-                Err(e) => {
-                    debug!("接收认证消息失败: {}", e);
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(None) => {
+                    debug!("接收通道已关闭");
+                    break;
+                }
+                Err(_) => {
+                    // 超时，继续循环
+                    continue;
                 }
             }
         }
@@ -280,19 +318,29 @@ impl QuicConnectionHandler {
     /// 解析认证消息
     /// 
     /// 解析客户端发送的认证消息，提取token并验证
-    async fn parse_auth_message(&self, message: &ProtoMessage) -> Result<Option<String>> {
-        if message.message_type == "auth" {
-            // 解析token
-            let token = String::from_utf8_lossy(&message.payload);
-            let token = token.trim_matches('"'); // 移除JSON引号
-            
-            // 验证token
-            if let Some(user_id) = self.validate_user_token(token).await? {
-                return Ok(Some(user_id));
+    async fn parse_auth_message(&self, message_data: &[u8]) -> Result<Option<String>> {
+        // 使用消息解析器处理认证消息
+        match self.message_parser.parse_message(message_data).await {
+            Ok(message) => {
+                // 检查是否是认证消息
+                if message.is_connect() {
+                    if let Some((user_id, _)) = message.as_connect_info() {
+                        return Ok(Some(user_id));
+                    }
+                }
+                Ok(None)
+            }
+            Err(_) => {
+                // 解析失败，尝试其他方式
+                if let Ok(token) = String::from_utf8(message_data.to_vec()) {
+                    // 简单的token验证
+                    if token.starts_with("auth_") {
+                        return Ok(Some(token[5..].to_string()));
+                    }
+                }
+                Ok(None)
             }
         }
-        
-        Ok(None)
     }
     
     /// 处理连接消息循环
@@ -309,62 +357,36 @@ impl QuicConnectionHandler {
     ) -> Result<()> {
         debug!("开始处理连接消息: 用户 {} 会话 {}", user_id, session_id);
         
-        loop {
-            match connection.receive().await {
-                Ok(message) => {
-                    // 处理消息
-                    if let Err(e) = self.handle_quic_message(&message, &user_id).await {
-                        error!("处理QUIC消息失败: {}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    debug!("接收消息失败: {}", e);
-                    break;
-                }
+        // 使用通道来接收消息
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
+        let user_id_clone = user_id.clone();
+        let session_id_clone = session_id.clone();
+        
+        // 启动接收任务
+        let tx_clone = tx.clone();
+        connection.start_receive_task(Box::new(move |msg| {
+            let tx = tx_clone.clone();
+            tokio::spawn(async move {
+                // 将UnifiedProtocolMessage转换为Vec<u8>
+                let msg_data = serde_json::to_vec(&msg).unwrap_or_default();
+                let _ = tx.send(msg_data).await;
+            });
+        })).await?;
+        
+        // 处理消息循环
+        while let Some(message_data) = rx.recv().await {
+            // 使用消息解析器处理消息
+            if let Err(e) = self.message_parser.handle_message(session_id_clone.clone(), &message_data).await {
+                error!("处理QUIC消息失败: {}", e);
+                break;
             }
         }
         
         // 处理连接关闭
-        self.handle_connection_closed(&user_id, &session_id).await?;
+        self.handle_connection_closed(&user_id_clone, &session_id_clone).await?;
         
         // 从连接管理器移除
-        self.connection_manager.remove_connection(&user_id, &session_id).await?;
-        
-        Ok(())
-    }
-    
-    /// 处理QUIC消息
-    /// 
-    /// 根据消息类型分发到不同的处理逻辑
-    async fn handle_quic_message(&self, message: &ProtoMessage, user_id: &str) -> Result<()> {
-        debug!("处理QUIC消息: 用户 {} 类型 {}", user_id, message.message_type);
-        
-        match message.message_type.as_str() {
-            "message" => {
-                // 处理普通消息
-                let response = self.handle_message_received(user_id, message.clone()).await?;
-                
-                // 发送响应给用户的所有连接
-                let _ = self.connection_manager.send_message_to_user(user_id, response).await;
-            }
-            "heartbeat" => {
-                // 处理心跳
-                self.handle_heartbeat(user_id, "").await?;
-            }
-            "ping" => {
-                // 处理ping - 发送pong响应
-                let pong = ProtoMessage::new(
-                    uuid::Uuid::new_v4().to_string(),
-                    "pong".to_string(),
-                    message.payload.clone(),
-                );
-                let _ = self.connection_manager.send_message_to_user(user_id, pong).await;
-            }
-            _ => {
-                warn!("未知消息类型: {}", message.message_type);
-            }
-        }
+        self.connection_manager.remove_connection(&user_id_clone, &session_id_clone).await?;
         
         Ok(())
     }
@@ -373,84 +395,15 @@ impl QuicConnectionHandler {
     /// 
     /// 在连接成功建立并认证后调用，触发相关事件
     pub async fn handle_connection_established(&self, user_id: &str, session_id: &str) -> Result<()> {
-        // 获取处理器
-        let event_handler = self.message_center.get_event_handler();
-        let message_handler = self.message_center.get_message_handler();
-        
-        // 触发连接事件
-        if let Some(handler) = &event_handler {
-            handler.handle_connection_event(user_id, ConnectionEvent::Connected).await?;
-        }
-        
-        // 调用消息处理器
-        if let Some(handler) = &message_handler {
-            handler.handle_user_connect(user_id, session_id, Platform::Unknown).await?;
-        }
-        
         info!("QUIC连接已建立: 用户 {} 会话 {}", user_id, session_id);
         Ok(())
-    }
-    
-    /// 处理消息接收
-    /// 
-    /// 处理接收到的消息，调用消息处理器并触发相关事件
-    pub async fn handle_message_received(&self, user_id: &str, message: ProtoMessage) -> Result<ProtoMessage> {
-        // 使用消息处理中心统一处理
-        self.message_center.process_message(user_id, "", message).await
     }
     
     /// 处理连接关闭
     /// 
     /// 在连接断开时调用，进行清理工作并触发相关事件
     pub async fn handle_connection_closed(&self, user_id: &str, session_id: &str) -> Result<()> {
-        // 获取处理器
-        let message_handler = self.message_center.get_message_handler();
-        let event_handler = self.message_center.get_event_handler();
-        
-        // 调用消息处理器
-        if let Some(handler) = &message_handler {
-            handler.handle_user_disconnect(user_id, session_id).await?;
-        }
-        
-        // 触发断开事件
-        if let Some(handler) = &event_handler {
-            handler.handle_connection_event(user_id, ConnectionEvent::Disconnected).await?;
-        }
-        
         info!("QUIC连接已关闭: 用户 {} 会话 {}", user_id, session_id);
         Ok(())
-    }
-    
-    /// 处理心跳
-    /// 
-    /// 处理客户端发送的心跳消息
-    pub async fn handle_heartbeat(&self, user_id: &str, session_id: &str) -> Result<()> {
-        // 获取处理器
-        let message_handler = self.message_center.get_message_handler();
-        let event_handler = self.message_center.get_event_handler();
-        
-        // 调用消息处理器
-        if let Some(handler) = &message_handler {
-            handler.handle_heartbeat(user_id, session_id).await?;
-        }
-        
-        // 触发心跳事件
-        if let Some(handler) = &event_handler {
-            handler.handle_connection_event(user_id, ConnectionEvent::Heartbeat).await?;
-        }
-        
-        debug!("QUIC心跳: 用户 {} 会话 {}", user_id, session_id);
-        Ok(())
-    }
-    
-    /// 验证用户令牌
-    /// 
-    /// 验证客户端提供的认证令牌
-    pub async fn validate_user_token(&self, token: &str) -> Result<Option<String>> {
-        if let Some(handler) = self.message_center.get_auth_handler() {
-            handler.validate_token(token).await
-        } else {
-            Ok(Some("anonymous".to_string())) // 如果没有认证处理器，默认允许匿名用户
-        }
     }
 } 

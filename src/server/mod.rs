@@ -2,13 +2,11 @@
 //!
 //! 提供高性能、可扩展的服务端实现
 
-pub mod traits;
 pub mod conn_manager;
 pub mod config;
-pub mod handlers;
 pub mod websocket_server;
 pub mod quic_server;
-pub mod message_center;
+pub mod message_processor;
 
 mod core;
 
@@ -24,11 +22,5 @@ pub use config::{
     ConnectionManagerConfig, AuthConfig, LoggingConfig, AuthMethod, ServerConfigBuilder
 };
 
-pub use handlers::{
-    AuthHandler, MessageHandler, EventHandler, 
-    DefaultAuthHandler, DefaultMessageHandler, DefaultEventHandler,
-    JwtAuthHandler,
-};
-
-// 重新导出消息处理中心
-pub use message_center::MessageProcessingCenter; 
+// 重新导出消息处理器
+pub use message_processor::{MessageProcessor, MessageProcessorBuilder, MessageStats}; 

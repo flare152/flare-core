@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use crate::common::{
-    Message, Result, FlareError, TransportProtocol,
-    ConnectionInfo
+    Result, FlareError, TransportProtocol,
+    ConnectionInfo, UnifiedProtocolMessage
 };
 
 /// 客户端连接管理器 trait
@@ -36,16 +36,16 @@ pub trait ClientConnectionManager: Send + Sync {
 #[async_trait]
 pub trait MessageSender: Send + Sync {
     /// 发送消息
-    async fn send_message(&self, to_user: &str, content: &str) -> Result<Message>;
+    async fn send_message(&self, to_user: &str, content: &str) -> Result<UnifiedProtocolMessage>;
     
     /// 发送消息到群组
-    async fn send_group_message(&self, group_id: &str, content: &str) -> Result<Message>;
+    async fn send_group_message(&self, group_id: &str, content: &str) -> Result<UnifiedProtocolMessage>;
     
     /// 发送消息并等待确认
-    async fn send_message_with_ack(&self, to_user: &str, content: &str) -> Result<Message>;
+    async fn send_message_with_ack(&self, to_user: &str, content: &str) -> Result<UnifiedProtocolMessage>;
     
     /// 设置消息接收回调
-    fn set_message_callback(&mut self, callback: Box<dyn Fn(Message) + Send + Sync>);
+    fn set_message_callback(&mut self, callback: Box<dyn Fn(UnifiedProtocolMessage) + Send + Sync>);
     
     /// 获取消息发送统计
     async fn get_send_stats(&self) -> Result<SendStats>;
@@ -153,10 +153,10 @@ pub trait ClientStateManager: Send + Sync {
 #[async_trait]
 pub trait CacheManager: Send + Sync {
     /// 缓存消息
-    async fn cache_message(&self, message: &Message) -> Result<()>;
+    async fn cache_message(&self, message: &UnifiedProtocolMessage) -> Result<()>;
     
     /// 获取缓存的消息
-    async fn get_cached_messages(&self, user_id: &str, limit: Option<usize>) -> Result<Vec<Message>>;
+    async fn get_cached_messages(&self, user_id: &str, limit: Option<usize>) -> Result<Vec<UnifiedProtocolMessage>>;
     
     /// 清理过期缓存
     async fn cleanup_expired_cache(&self, max_age_hours: u64) -> Result<usize>;

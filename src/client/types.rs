@@ -2,37 +2,43 @@
 //!
 //! 定义客户端相关的类型和结构
 
-use crate::common::{TransportProtocol, ProtoMessage};
+use crate::common::{TransportProtocol, UnifiedProtocolMessage};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-/// 客户端状态
+/// 客户端状态枚举
+/// 
+/// 定义了客户端连接的生命周期状态
+/// 用于跟踪客户端的连接状态变化
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientStatus {
-    /// 未连接
+    /// 未连接状态，客户端尚未建立连接
     Disconnected,
-    /// 连接中
+    /// 正在连接状态，客户端正在尝试建立连接
     Connecting,
-    /// 已连接
+    /// 已连接状态，客户端已成功连接到服务器
     Connected,
-    /// 重连中
+    /// 重连中状态，连接断开后正在尝试重新连接
     Reconnecting,
-    /// 连接失败
+    /// 连接失败状态，连接尝试失败且不再重试
     Failed,
 }
 
-/// 发送结果
+/// 消息发送结果结构体
+/// 
+/// 记录消息发送的详细结果信息
+/// 包括发送状态、时间戳、错误信息和重试次数
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendResult {
-    /// 消息ID
+    /// 被发送消息的唯一标识符
     pub message_id: String,
-    /// 发送时间
+    /// 消息发送的时间戳
     pub send_time: chrono::DateTime<chrono::Utc>,
-    /// 是否成功
+    /// 发送是否成功
     pub success: bool,
-    /// 错误信息
+    /// 如果发送失败，包含错误信息
     pub error_message: Option<String>,
-    /// 重试次数
+    /// 发送失败后的重试次数
     pub retry_count: u32,
 }
 
@@ -71,26 +77,29 @@ impl SendResult {
     }
 }
 
-/// 连接统计信息
+/// 客户端连接统计信息结构体
+/// 
+/// 记录客户端连接的各种统计指标
+/// 包括消息传输、连接时间、重连次数和错误统计等
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionStats {
-    /// 发送的消息数
+    /// 已发送的消息总数
     pub messages_sent: u64,
-    /// 接收的消息数
+    /// 已接收的消息总数
     pub messages_received: u64,
-    /// 发送的字节数
+    /// 已发送的字节总数
     pub bytes_sent: u64,
-    /// 接收的字节数
+    /// 已接收的字节总数
     pub bytes_received: u64,
-    /// 连接时间
+    /// 连接建立以来的总时间
     pub connection_time: Duration,
-    /// 最后活动时间
+    /// 最后一次数据传输的时间戳
     pub last_activity: chrono::DateTime<chrono::Utc>,
-    /// 重连次数
+    /// 重连尝试的总次数
     pub reconnect_count: u32,
-    /// 心跳次数
+    /// 发送心跳消息的总次数
     pub heartbeat_count: u64,
-    /// 错误次数
+    /// 发生错误的总次数
     pub error_count: u64,
 }
 
@@ -112,18 +121,22 @@ impl Default for ConnectionStats {
 
 /// 协议性能指标
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// 协议性能指标结构体
+/// 
+/// 记录特定传输协议的性能测试结果
+/// 用于协议竞速和性能比较
 pub struct ProtocolMetrics {
-    /// 协议类型
+    /// 被测试的协议类型
     pub protocol: TransportProtocol,
-    /// 连接延迟（毫秒）
+    /// 连接建立的延迟时间（毫秒）
     pub connection_latency_ms: u64,
-    /// 消息延迟（毫秒）
+    /// 消息传输的平均延迟时间（毫秒）
     pub message_latency_ms: u64,
-    /// 吞吐量（消息/秒）
+    /// 消息吞吐量，每秒处理的消息数量
     pub throughput_msgs_per_sec: f64,
-    /// 成功率
+    /// 操作成功率，0.0 到 1.0 之间
     pub success_rate: f64,
-    /// 测试时间
+    /// 性能测试的执行时间戳
     pub test_time: chrono::DateTime<chrono::Utc>,
 }
 
@@ -158,8 +171,10 @@ impl ProtocolMetrics {
 /// 消息队列项
 #[derive(Debug, Clone)]
 pub struct MessageQueueItem {
+    /// 消息ID
+    pub message_id: String,
     /// 消息
-    pub message: ProtoMessage,
+    pub message: UnifiedProtocolMessage,
     /// 目标用户ID
     pub target_user_id: String,
     /// 消息类型
@@ -177,13 +192,15 @@ pub struct MessageQueueItem {
 impl MessageQueueItem {
     /// 创建新的队列项
     pub fn new(
-        message: ProtoMessage,
+        message_id: String,
+        message: UnifiedProtocolMessage,
         target_user_id: String,
         message_type: String,
         max_retries: u32,
         priority: MessagePriority,
     ) -> Self {
         Self {
+            message_id,
             message,
             target_user_id,
             message_type,
@@ -238,7 +255,7 @@ pub enum ClientEvent {
     /// 重连失败
     ReconnectFailed,
     /// 消息接收
-    MessageReceived(ProtoMessage),
+    MessageReceived(UnifiedProtocolMessage),
     /// 消息发送
     MessageSent(String),
     /// 消息发送失败
@@ -255,7 +272,7 @@ pub enum ClientEvent {
 pub type ClientEventCallback = Box<dyn Fn(ClientEvent) + Send + Sync>;
 
 /// 消息处理器
-pub type MessageHandler = Box<dyn Fn(ProtoMessage) + Send + Sync>;
+pub type MessageHandler = Box<dyn Fn(UnifiedProtocolMessage) + Send + Sync>;
 
 /// 错误处理器
 pub type ErrorHandler = Box<dyn Fn(String) + Send + Sync>; 

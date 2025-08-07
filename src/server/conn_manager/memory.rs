@@ -10,15 +10,21 @@ use tokio::sync::{RwLock, Mutex};
 use tokio::time::interval;
 use tracing::{info, warn, debug, error};        
 
-use crate::common::{
-    conn::{Connection, ConnectionEvent, ConnectionState, ProtoMessage},
-    Result, FlareError, TransportProtocol
-};
+use crate::common::{conn::Connection, Result, FlareError, TransportProtocol, UnifiedProtocolMessage, ConnectionStatus};
 
 use super::{
     ServerConnectionManager, ServerConnectionManagerConfig, ServerConnectionInfo,
     ServerConnectionManagerStats, ConnectionEventCallback
 };
+
+/// 连接事件枚举
+#[derive(Debug, Clone)]
+pub enum ConnectionEvent {
+    Connected,
+    Disconnected,
+    Reconnecting,
+    Failed,
+}
 
 /// 内存中的连接记录
 #[derive(Debug)]
@@ -44,11 +50,7 @@ impl MemoryConnectionRecord {
             session_id,
             connection.remote_addr().to_string(),
             connection.platform(),
-            match connection.protocol() {
-                "QUIC" => TransportProtocol::QUIC,
-                "WebSocket" => TransportProtocol::WebSocket,
-                _ => TransportProtocol::WebSocket,
-            },
+            connection.protocol(),
         );
         
         Self {
@@ -127,7 +129,7 @@ impl MemoryServerConnectionManager {
     }
 
     /// 触发连接事件
-    async fn trigger_event(&self, user_id: String, event: ConnectionEvent) {
+    async fn trigger_event(&self, user_id: String, event: String) {
         if let Some(callback) = &*self.event_callback.read().await {
             callback(user_id, event);
         }
@@ -149,8 +151,8 @@ impl MemoryServerConnectionManager {
         
         for record in connections.values() {
             match record.info.state {
-                ConnectionState::Connected => active_count += 1,
-                ConnectionState::Disconnected => disconnected_count += 1,
+                ConnectionStatus::Connected => active_count += 1,
+                ConnectionStatus::Disconnected => disconnected_count += 1,
                 _ => {}
             }
         }
@@ -182,12 +184,12 @@ impl MemoryServerConnectionManager {
                         
                         // 如果心跳丢失次数过多，标记为断开
                         if record.info.missed_heartbeats >= config.max_missed_heartbeats {
-                            record.info.state = ConnectionState::Disconnected;
+                            record.info.state = ConnectionStatus::Disconnected;
                             
                             // 触发断开事件
                             if let Some(callback) = &*event_callback.read().await {
                                 let user_id = record.info.user_id.clone();
-                                callback(user_id, ConnectionEvent::Disconnected);
+                                callback(user_id, "disconnected".to_string());
                             }
                             
                             debug!("连接心跳超时，标记为断开: {}", key);
@@ -329,7 +331,7 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
             if current_count >= max_connections {
                 let error_msg = format!("连接数已达上限: 当前={}, 最大={}", current_count, max_connections);
                 error!("{}", error_msg);
-                return Err(FlareError::ResourceExhausted(error_msg));
+                return Err(FlareError::internal_error(error_msg));
             }
         }
         
@@ -367,7 +369,7 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
         
         // 触发连接事件
         info!("开始触发连接事件");
-        self.trigger_event(user_id.clone(), ConnectionEvent::Connected).await;
+        self.trigger_event(user_id.clone(), "connected".to_string()).await;
         info!("连接事件触发完成");
         
         info!("连接添加成功: 用户={}, 会话={}, 键={}", user_id, session_id, key);
@@ -399,7 +401,7 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
             self.update_stats().await;
             
             // 触发断开事件
-            self.trigger_event(user_id.to_string(), ConnectionEvent::Disconnected).await;
+            self.trigger_event(user_id.to_string(), "disconnected".to_string()).await;
             
             debug!("移除连接: {}", key);
         }
@@ -470,7 +472,7 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
         Ok(connections.len())
     }
     
-    async fn send_message_to_user(&self, user_id: &str, message: ProtoMessage) -> Result<usize> {
+    async fn send_message_to_user(&self, user_id: &str, message: UnifiedProtocolMessage) -> Result<usize> {
         let user_connections = self.get_user_connections(user_id).await?;
         let mut success_count = 0;
         
@@ -483,7 +485,7 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
                     {
                         let mut stats = self.stats.write().await;
                         stats.total_messages += 1;
-                        stats.total_bytes += message.payload.len() as u64;
+                        stats.total_bytes += message.c.len() as u64;
                     }
                 }
                 Err(e) => {
@@ -495,7 +497,39 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
         Ok(success_count)
     }
     
-    async fn broadcast_message(&self, message: ProtoMessage) -> Result<usize> {
+    async fn send_message_to_session(&self, session_id: &str, message: UnifiedProtocolMessage) -> Result<bool> {
+        let connections = self.connections.read().await;
+        
+        // 查找指定会话ID的连接
+        for (key, record) in connections.iter() {
+            if record.info.session_id == session_id {
+                // 克隆消息用于统计
+                let message_for_stats = message.clone();
+                match record.connection.send(message).await {
+                    Ok(_) => {
+                        // 更新统计信息
+                        {
+                            let mut stats = self.stats.write().await;
+                            stats.total_messages += 1;
+                            stats.total_bytes += message_for_stats.c.len() as u64;
+                        }
+                        
+                        debug!("发送消息到会话成功: {}", key);
+                        return Ok(true);
+                    }
+                    Err(e) => {
+                        warn!("发送消息到会话失败: {} 错误: {}", key, e);
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        
+        warn!("会话不存在: {}", session_id);
+        Ok(false)
+    }
+    
+    async fn broadcast_message(&self, message: UnifiedProtocolMessage) -> Result<usize> {
         let connections = self.connections.read().await;
         let mut success_count = 0;
         
@@ -508,7 +542,7 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
                     {
                         let mut stats = self.stats.write().await;
                         stats.total_messages += 1;
-                        stats.total_bytes += message.payload.len() as u64;
+                        stats.total_bytes += message.c.len() as u64;
                     }
                 }
                 Err(e) => {
@@ -607,7 +641,7 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
         // 触发断开事件
         self.trigger_event(
             user_id.to_string(),
-            ConnectionEvent::Disconnected
+            "disconnected".to_string()
         ).await;
         
         info!("强制断开用户 {} 的 {} 个连接", user_id, disconnected_count);
@@ -655,6 +689,17 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
     
     fn get_config(&self) -> &ServerConnectionManagerConfig {
         &self.config
+    }
+    
+    async fn get_all_connections(&self) -> Result<Vec<(String, ServerConnectionInfo)>> {
+        let connections = self.connections.read().await;
+        let mut result = Vec::new();
+        
+        for (key, record) in connections.iter() {
+            result.push((key.clone(), record.info.clone()));
+        }
+        
+        Ok(result)
     }
 }
 

@@ -5,10 +5,7 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
 
-use crate::common::{
-    conn::{Connection, ConnectionEvent, ConnectionState,ProtoMessage, Platform},
-    Result,TransportProtocol
-};
+use crate::common::{conn::Connection, Result, TransportProtocol, types::Platform, UnifiedProtocolMessage, ConnectionStatus};
 
 /// 连接管理器配置
 #[derive(Debug, Clone)]
@@ -65,7 +62,7 @@ pub struct ServerConnectionInfo {
     /// 协议
     pub protocol: TransportProtocol,
     /// 连接状态
-    pub state: ConnectionState,
+    pub state: ConnectionStatus,
     /// 连接时间
     pub connected_at: chrono::DateTime<chrono::Utc>,
     /// 最后活动时间
@@ -100,7 +97,7 @@ impl ServerConnectionInfo {
             remote_addr,
             platform,
             protocol,
-            state: ConnectionState::Connected,
+            state: ConnectionStatus::Connected,
             connected_at: now,
             last_activity: now,
             last_heartbeat: now,
@@ -174,7 +171,7 @@ impl Default for ServerConnectionManagerStats {
 }
 
 /// 连接事件回调
-pub type ConnectionEventCallback = Box<dyn Fn(String, ConnectionEvent) + Send + Sync>;
+pub type ConnectionEventCallback = Box<dyn Fn(String, String) + Send + Sync>;
 
 /// 服务端连接管理器trait
 /// 
@@ -261,7 +258,17 @@ pub trait ServerConnectionManager: Send + Sync {
     /// 
     /// # 返回
     /// * `Result<usize>` - 成功发送的连接数
-    async fn send_message_to_user(&self, user_id: &str, message: ProtoMessage) -> Result<usize>;
+    async fn send_message_to_user(&self, user_id: &str, message: UnifiedProtocolMessage) -> Result<usize>;
+    
+    /// 发送消息给指定会话
+    /// 
+    /// # 参数
+    /// * `session_id` - 会话ID
+    /// * `message` - 消息内容
+    /// 
+    /// # 返回
+    /// * `Result<bool>` - 是否发送成功
+    async fn send_message_to_session(&self, session_id: &str, message: UnifiedProtocolMessage) -> Result<bool>;
     
     /// 广播消息给所有用户
     /// 
@@ -270,7 +277,7 @@ pub trait ServerConnectionManager: Send + Sync {
     /// 
     /// # 返回
     /// * `Result<usize>` - 成功发送的连接数
-    async fn broadcast_message(&self, message: ProtoMessage) -> Result<usize>;
+    async fn broadcast_message(&self, message: UnifiedProtocolMessage) -> Result<usize>;
     
     /// 更新心跳
     /// 
@@ -337,6 +344,12 @@ pub trait ServerConnectionManager: Send + Sync {
     /// # 返回
     /// * `ServerConnectionManagerConfig` - 配置信息
     fn get_config(&self) -> &ServerConnectionManagerConfig;
+    
+    /// 获取所有连接
+    /// 
+    /// # 返回
+    /// * `Result<Vec<(String, ServerConnectionInfo)>>` - 所有连接信息
+    async fn get_all_connections(&self) -> Result<Vec<(String, ServerConnectionInfo)>>;
 }
 
 // 导出子模块

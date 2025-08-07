@@ -11,7 +11,7 @@ pub mod traits;
 pub mod websocket_connector;
 pub mod quic_connector;
 
-use crate::common::{TransportProtocol, Result, ProtoMessage};
+use crate::common::{TransportProtocol, Result, UnifiedProtocolMessage};
 use crate::client::{
     config::{ClientConfig, ClientConfigBuilder, ProtocolSelectionMode, ServerAddresses},
     types::{ClientEventCallback},
@@ -134,13 +134,13 @@ impl FlareIMClient {
     }
 
     /// 发送消息
-    pub async fn send_message(&self, target_user_id: &str, message: ProtoMessage) -> Result<SendResult> {
+    pub async fn send_message(&self, target_user_id: &str, message: UnifiedProtocolMessage) -> Result<SendResult> {
         let message_manager = self.message_manager.lock().await;
         message_manager.send_message(target_user_id, message, types::MessagePriority::Normal).await
     }
 
     /// 接收消息
-    pub async fn receive_message(&self, message: ProtoMessage) -> Result<()> {
+    pub async fn receive_message(&self, message: UnifiedProtocolMessage) -> Result<()> {
         let message_manager = self.message_manager.lock().await;
         message_manager.receive_message(message).await
     }

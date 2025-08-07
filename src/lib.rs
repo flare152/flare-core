@@ -28,7 +28,7 @@ pub mod server;
 
 // 重新导出常用类型
 pub use common::{
-    TransportProtocol, Message, Result, FlareError
+    TransportProtocol,Result, FlareError, UnifiedProtocolMessage
 };
 
 #[cfg(feature = "client")]

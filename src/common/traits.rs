@@ -31,47 +31,6 @@ pub trait ConnectionManager: Send + Sync {
     async fn update_heartbeat(&self, user_id: &str, session_id: &str) -> Result<()>;
 }
 
-/// 连接统计信息
-#[derive(Debug, Clone)]
-pub struct ConnectionStats {
-    pub total_connections: usize,
-    pub active_connections: usize,
-    pub quic_connections: usize,
-    pub websocket_connections: usize,
-    pub avg_heartbeat_interval_ms: u64,
-}
-
-/// 消息处理器 trait
-/// 负责处理消息的路由和分发
-#[async_trait]
-pub trait MessageHandler: Send + Sync {
-    /// 处理接收到的消息
-    async fn handle_message(&self, message: crate::common::protocol::Message) -> Result<()>;
-    
-    /// 广播消息给多个用户
-    async fn broadcast_message(&self, message: crate::common::protocol::Message, user_ids: Vec<String>) -> Result<()>;
-}
-
-/// 事件监听器 trait
-/// 用于监听系统事件
-#[async_trait]
-pub trait EventListener: Send + Sync {
-    /// 用户连接事件
-    async fn on_user_connected(&self, user_id: &str, session_id: &str) -> Result<()>;
-    
-    /// 用户断开事件
-    async fn on_user_disconnected(&self, user_id: &str, session_id: &str) -> Result<()>;
-    
-    /// 消息接收事件
-    async fn on_message_received(&self, message: &crate::common::protocol::Message) -> Result<()>;
-    
-    /// 协议切换事件
-    async fn on_protocol_switched(&self, from: TransportProtocol, to: TransportProtocol) -> Result<()>;
-    
-    /// 错误事件
-    async fn on_error(&self, error: &FlareError) -> Result<()>;
-}
-
 /// 认证处理器 trait
 /// 处理用户认证
 #[async_trait]

@@ -17,44 +17,8 @@ use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
 
 use crate::{Result, TransportProtocol};
-
-/// 平台类型
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Platform {
-    Android,
-    IOS,
-    Web,
-    Desktop,
-    Server,
-    WebSocket,
-    Unknown,
-}
-
-impl Default for Platform {
-    fn default() -> Self {
-        Platform::Unknown
-    }
-}
-
-/// 协议消息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProtoMessage {
-    pub id: String,
-    pub message_type: String,
-    pub payload: Vec<u8>,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-}
-
-impl ProtoMessage {
-    pub fn new(id: String, message_type: String, payload: Vec<u8>) -> Self {
-        Self {
-            id,
-            message_type,
-            payload,
-            timestamp: chrono::Utc::now(),
-        }
-    }
-}
+use crate::common::protocol::UnifiedProtocolMessage;
+use crate::common::types::Platform;
 
 /// 连接标准接口
 #[async_trait]
@@ -69,7 +33,7 @@ pub trait Connection: Send + Sync + std::fmt::Debug {
     fn platform(&self) -> Platform;
     
     /// 协议名称
-    fn protocol(&self) -> &str;
+    fn protocol(&self) -> TransportProtocol;
     
     /// 检查连接是否活跃
     /// 
@@ -81,37 +45,50 @@ pub trait Connection: Send + Sync + std::fmt::Debug {
     async fn is_active(&self, timeout: Duration) -> bool;
     
     /// 发送消息
-    fn send(&self, msg: ProtoMessage) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+    fn send(&self, msg: UnifiedProtocolMessage) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
     
-    /// 接收消息
-    fn receive(&self) -> Pin<Box<dyn Future<Output = Result<ProtoMessage>> + Send + '_>>;
+    /// 启动接收消息任务
+    /// 
+    /// # 参数
+    /// * `callback` - 消息接收回调函数，当收到消息时会调用此函数
+    /// 
+    /// # 返回
+    /// * `Result<()>` - 启动成功返回 Ok(()), 失败返回错误
+    fn start_receive_task(&self, callback: Box<dyn Fn(UnifiedProtocolMessage) + Send + Sync>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
     
     /// 关闭连接
     fn close(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
     
     /// 克隆
     fn clone_box(&self) -> Box<dyn Connection>;
+    
+    /// 更新最后活跃时间
+    fn update_last_activity(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    
+    /// 获取最后活跃时间
+    fn get_last_activity(&self) -> Pin<Box<dyn Future<Output = chrono::DateTime<chrono::Utc>> + Send + '_>>;
 }
 
-/// 连接状态
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ConnectionState {
-    Disconnected,
-    Connecting,
-    Connected,
-    Reconnecting,
-    Failed,
-}
 
-/// 连接统计
+/// 连接统计信息结构体
+/// 
+/// 记录连接的各种统计指标，用于监控连接的性能和状态
+/// 包括数据传输量、消息数量、连接时间和重连次数等信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionStats {
+    /// 已发送的字节总数
     pub bytes_sent: u64,
+    /// 已接收的字节总数
     pub bytes_received: u64,
+    /// 已发送的消息总数
     pub messages_sent: u64,
+    /// 已接收的消息总数
     pub messages_received: u64,
+    /// 连接建立以来的总时间（毫秒）
     pub connection_time_ms: u64,
+    /// 最后一次活动的时间戳
     pub last_activity: chrono::DateTime<chrono::Utc>,
+    /// 重连尝试的次数
     pub reconnect_count: u32,
 }
 
@@ -129,29 +106,26 @@ impl Default for ConnectionStats {
     }
 }
 
-/// 连接事件
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ConnectionEvent {
-    Connected,
-    Disconnected,
-    Reconnecting,
-    Failed(String),
-    MessageReceived(ProtoMessage),
-    MessageSent(ProtoMessage),
-    Heartbeat,
-    Error(String),
-}
-
-/// 连接配置
+/// 连接配置结构体
+/// 
+/// 定义了建立连接所需的各种配置参数
+/// 包括连接标识、远程地址、平台类型、协议类型和各种超时设置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
+    /// 连接的唯一标识符
     pub id: String,
+    /// 远程服务器的地址和端口
+    /// 格式：host:port 或 ws://host:port 或 wss://host:port
     pub remote_addr: String,
+    /// 客户端平台类型
     pub platform: Platform,
+    /// 传输协议类型（QUIC 或 WebSocket）
     pub protocol: TransportProtocol,
+    /// 连接超时时间（毫秒）
     pub timeout_ms: u64,
-    pub heartbeat_interval_ms: u64,
+    /// 最大重连尝试次数
     pub max_reconnect_attempts: u32,
+    /// 重连延迟时间（毫秒）
     pub reconnect_delay_ms: u64,
 }
 
@@ -163,15 +137,18 @@ impl Default for ConnectionConfig {
             platform: Platform::Unknown,
             protocol: TransportProtocol::QUIC,
             timeout_ms: 10000,
-            heartbeat_interval_ms: 30000,
             max_reconnect_attempts: 3,
             reconnect_delay_ms: 1000,
         }
     }
 }
 
-/// 连接构建器
+/// 连接构建器结构体
+/// 
+/// 提供链式调用的方式来构建连接配置
+/// 使用 Builder 模式，可以逐步设置各种连接参数
 pub struct ConnectionBuilder {
+    /// 内部存储的连接配置
     config: ConnectionConfig,
 }
 
@@ -210,12 +187,6 @@ impl ConnectionBuilder {
     /// 设置超时时间
     pub fn timeout_ms(mut self, timeout_ms: u64) -> Self {
         self.config.timeout_ms = timeout_ms;
-        self
-    }
-    
-    /// 设置心跳间隔
-    pub fn heartbeat_interval_ms(mut self, heartbeat_interval_ms: u64) -> Self {
-        self.config.heartbeat_interval_ms = heartbeat_interval_ms;
         self
     }
     
