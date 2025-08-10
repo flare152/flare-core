@@ -32,7 +32,7 @@ pub use common::{
 };
 
 #[cfg(feature = "client")]
-pub use client::FlareIMClient;
+pub use client::Client;
 
 #[cfg(feature = "server")]
 pub use server::{FlareIMServer, FlareIMServerBuilder};

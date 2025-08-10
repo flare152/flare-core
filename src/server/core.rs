@@ -19,7 +19,6 @@ use super::{
     },
     websocket_server::WebSocketServer,
     quic_server::QuicServer,
-    message_processor::{DefaultMessageProcessor},
 };
 
 /// Flare IM 服务端

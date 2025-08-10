@@ -16,9 +16,7 @@ use crate::common::{
     MessageParser,
 };
 
-use super::{
-    conn_manager::{MemoryServerConnectionManager, ServerConnectionManager},
-};
+use super::conn_manager::ServerConnectionManager;
 use super::config::WebSocketServerConfig;
 
 /// WebSocket服务器

@@ -127,6 +127,7 @@ cargo run --example auto_racing_client
 
 ### 1. 完整的事件处理
 ```rust
+use flare_core::client::callbacks::ClientEventCallback;
 let event_callback: Arc<ClientEventCallback> = Arc::new(Box::new(|event| {
     match event {
         ClientEvent::Connected(protocol) => {
@@ -245,7 +246,7 @@ ClientEvent::MessageReceived(message) => {
 
 1. **启用详细日志**
    ```bash
-   RUST_LOG=debug cargo run --example websocket_client
+    RUST_LOG=debug cargo run --example websocket_client
    ```
 
 2. **监控连接状态**

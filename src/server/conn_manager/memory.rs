@@ -10,7 +10,7 @@ use tokio::sync::{RwLock, Mutex};
 use tokio::time::interval;
 use tracing::{info, warn, debug, error};        
 
-use crate::common::{conn::Connection, Result, FlareError, TransportProtocol, UnifiedProtocolMessage, ConnectionStatus};
+use crate::common::{conn::Connection, Result, FlareError, UnifiedProtocolMessage, ConnectionStatus};
 
 use super::{
     ServerConnectionManager, ServerConnectionManagerConfig, ServerConnectionInfo,

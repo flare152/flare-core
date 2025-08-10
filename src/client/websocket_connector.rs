@@ -3,26 +3,28 @@
 //! 负责创建和管理 WebSocket 连接
 
 use crate::common::{
-    TransportProtocol, Result, UnifiedProtocolMessage,
+    TransportProtocol, Result,
     conn::{Connection, ConnectionBuilder},
     types::Platform,
 };
 use crate::client::config::ClientConfig;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::info;
 use tokio_tungstenite::connect_async;
 
 use url::Url;
+use std::sync::Arc;
 
 /// WebSocket 连接器
 pub struct WebSocketConnector {
     config: ClientConfig,
+    message_parser: Arc<crate::common::MessageParser>,
 }
 
 impl WebSocketConnector {
     /// 创建新的 WebSocket 连接器
-    pub fn new(config: ClientConfig) -> Self {
-        Self { config }
+    pub fn new(config: ClientConfig, message_parser: Arc<crate::common::MessageParser>) -> Self {
+        Self { config, message_parser }
     }
 
     /// 创建 WebSocket 连接
@@ -63,6 +65,7 @@ impl WebSocketConnector {
         let ws_connection = crate::common::conn::websocket::WebSocketConnectionFactory::from_tungstenite_stream(
             config,
             ws_stream,
+            Arc::clone(&self.message_parser),
         );
 
         info!("WebSocket 连接创建成功");
@@ -84,22 +87,5 @@ impl WebSocketConnector {
 
         info!("WebSocket 连接建立成功");
         Ok(ws_stream.0)
-    }
-
-    /// 验证连接
-    pub async fn validate_connection(&self, connection: &Box<dyn Connection + Send + Sync>) -> Result<bool> {
-        // 发送 ping 消息测试连接
-        let ping_message = UnifiedProtocolMessage::text("ping".to_string());
-
-        match connection.send(ping_message).await {
-            Ok(_) => {
-                info!("WebSocket 连接验证成功");
-                Ok(true)
-            }
-            Err(e) => {
-                warn!("WebSocket 连接验证失败: {}", e);
-                Ok(false)
-            }
-        }
     }
 } 

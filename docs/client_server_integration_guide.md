@@ -176,6 +176,7 @@ let mut client = FlareIMClientBuilder::new("racing_user".to_string())
 ### 1. 事件回调设置
 
 ```rust
+use flare_core::client::callbacks::ClientEventCallback;
 let event_callback: Arc<ClientEventCallback> = Arc::new(Box::new(|event| {
     match event {
         ClientEvent::Connected(protocol) => {

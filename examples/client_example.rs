@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use flare_core::{
     client::{
-        FlareIMClient, FlareIMClientBuilder,
+        Client, config::{ClientConfigBuilder, ServerAddresses, ProtocolSelectionMode},
     },
     common::{TransportProtocol, Result},
 };
@@ -25,46 +25,51 @@ async fn main() -> Result<()> {
     
     // 示例1: 仅使用WebSocket连接
     println!("\n📡 示例1: 仅使用WebSocket连接");
-    let client1 = FlareIMClientBuilder::new("user1".to_string())
-        .server_addresses(flare_core::client::config::ServerAddresses::new()
+    let config1 = ClientConfigBuilder::new("user1".to_string())
+        .server_addresses(ServerAddresses::new()
             .with_websocket_url("ws://127.0.0.1:4000".to_string()))
-        .protocol_selection_mode(flare_core::client::config::ProtocolSelectionMode::Specific(TransportProtocol::WebSocket))
+        .protocol_selection_mode(ProtocolSelectionMode::Specific(TransportProtocol::WebSocket))
         .build()?;
+    let _client1 = Client::new(config1);
     
     // 示例2: 仅使用QUIC连接
     println!("\n📡 示例2: 仅使用QUIC连接");
-    let client2 = FlareIMClientBuilder::new("user2".to_string())
-        .server_addresses(flare_core::client::config::ServerAddresses::new()
+    let config2 = ClientConfigBuilder::new("user2".to_string())
+        .server_addresses(ServerAddresses::new()
             .with_quic_url("quic://127.0.0.1:4010".to_string()))
-        .protocol_selection_mode(flare_core::client::config::ProtocolSelectionMode::Specific(TransportProtocol::QUIC))
+        .protocol_selection_mode(ProtocolSelectionMode::Specific(TransportProtocol::QUIC))
         .build()?;
+    let _client2 = Client::new(config2);
     
     // 示例3: 自动选择协议
     println!("\n📡 示例3: 自动选择协议");
-    let client3 = FlareIMClientBuilder::new("user3".to_string())
-        .server_addresses(flare_core::client::config::ServerAddresses::new()
+    let config3 = ClientConfigBuilder::new("user3".to_string())
+        .server_addresses(ServerAddresses::new()
             .with_websocket_url("ws://127.0.0.1:4000".to_string())
             .with_quic_url("quic://127.0.0.1:4010".to_string()))
-        .protocol_selection_mode(flare_core::client::config::ProtocolSelectionMode::AutoRacing)
+        .protocol_selection_mode(ProtocolSelectionMode::AutoRacing)
         .build()?;
+    let _client3 = Client::new(config3);
     
     // 示例4: 使用协议选择枚举
     println!("\n📡 示例4: 使用协议选择枚举");
-    let client4 = FlareIMClientBuilder::new("user4".to_string())
-        .server_addresses(flare_core::client::config::ServerAddresses::new()
+    let config4 = ClientConfigBuilder::new("user4".to_string())
+        .server_addresses(ServerAddresses::new()
             .with_websocket_url("ws://127.0.0.1:4000".to_string())
             .with_quic_url("quic://127.0.0.1:4010".to_string()))
-        .protocol_selection_mode(flare_core::client::config::ProtocolSelectionMode::AutoRacing)
+        .protocol_selection_mode(ProtocolSelectionMode::AutoRacing)
         .build()?;
+    let _client4 = Client::new(config4);
     
     // 运行默认客户端 (自动选择协议)
     println!("\n🚀 启动默认客户端 (自动选择协议)");
-    let mut client = FlareIMClientBuilder::new("test_user".to_string())
-        .server_addresses(flare_core::client::config::ServerAddresses::new()
+    let config = ClientConfigBuilder::new("test_user".to_string())
+        .server_addresses(ServerAddresses::new()
             .with_websocket_url("ws://127.0.0.1:4000".to_string())
             .with_quic_url("quic://127.0.0.1:4010".to_string()))
-        .protocol_selection_mode(flare_core::client::config::ProtocolSelectionMode::AutoRacing)
+        .protocol_selection_mode(ProtocolSelectionMode::AutoRacing)
         .build()?;
+    let mut client = Client::new(config);
     
     // 连接到服务器
     println!("正在连接到服务器...");

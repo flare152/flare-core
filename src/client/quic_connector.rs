@@ -3,25 +3,27 @@
 //! 负责创建和管理 QUIC 连接
 
 use crate::common::{
-    TransportProtocol, Result, UnifiedProtocolMessage,
+    TransportProtocol, Result,
     conn::{Connection, ConnectionBuilder},
     types::Platform,
 };
 use crate::client::config::ClientConfig;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::info;
 use quinn::{Endpoint, ClientConfig as QuinnClientConfig};
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 /// QUIC 连接器
 pub struct QuicConnector {
     config: ClientConfig,
+    message_parser: Arc<crate::common::MessageParser>,
 }
 
 impl QuicConnector {
     /// 创建新的 QUIC 连接器
-    pub fn new(config: ClientConfig) -> Self {
-        Self { config }
+    pub fn new(config: ClientConfig, message_parser: Arc<crate::common::MessageParser>) -> Self {
+        Self { config, message_parser }
     }
 
     /// 创建 QUIC 连接
@@ -58,6 +60,7 @@ impl QuicConnector {
             connection,
             send_stream,
             recv_stream,
+            Arc::clone(&self.message_parser),
         ).await;
 
         info!("QUIC 连接创建成功");
@@ -130,22 +133,5 @@ impl QuicConnector {
 
         info!("QUIC 双向流打开成功");
         Ok((connection, send_stream, recv_stream))
-    }
-
-    /// 验证连接
-    pub async fn validate_connection(&self, connection: &Box<dyn Connection + Send + Sync>) -> Result<bool> {
-        // 发送 ping 消息测试连接
-        let ping_message = UnifiedProtocolMessage::text("ping".to_string());
-
-        match connection.send(ping_message).await {
-            Ok(_) => {
-                info!("QUIC 连接验证成功");
-                Ok(true)
-            }
-            Err(e) => {
-                warn!("QUIC 连接验证失败: {}", e);
-                Ok(false)
-            }
-        }
     }
 } 

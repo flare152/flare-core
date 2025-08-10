@@ -5,13 +5,23 @@
 use crate::common::{TransportProtocol, Result, UnifiedProtocolMessage};
 use crate::client::{
     config::{ClientConfig, ProtocolRacingConfig, ProtocolWeights},
-    types::{ProtocolMetrics, ClientEvent},
+    types::ProtocolMetrics,
 };
+use crate::common::callback::{ConnectEvent, DisconnectEvent, HeartbeatEvent, CustomEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 use tracing::{info, warn};
+
+/// 客户端事件类型
+#[derive(Debug, Clone)]
+pub enum ClientEvent {
+    Connect(ConnectEvent),
+    Disconnect(DisconnectEvent),
+    Heartbeat(HeartbeatEvent),
+    Custom(CustomEvent),
+}
 
 /// 协议竞速器
 pub struct ProtocolRacer {
@@ -127,7 +137,24 @@ impl ProtocolRacer {
 
         // 触发协议切换事件
         if let Some(callback) = &self.event_callback {
-            callback(ClientEvent::ProtocolSwitched(best_protocol));
+            let old_protocol = *self.current_protocol.read().await;
+            let metadata = crate::common::callback::create_metadata_from_protocol_message(
+                "protocol_switched",
+                None,
+                None,
+                None,
+                "default_session".to_string(),
+            );
+            let custom_event = crate::common::callback::CustomEvent {
+                event_name: "protocol_switched".to_string(),
+                data: serde_json::json!({
+                    "new_protocol": best_protocol,
+                    "old_protocol": old_protocol,
+                    "session_id": "default_session"
+                }).to_string().into_bytes(),
+                metadata,
+            };
+            callback(ClientEvent::Custom(custom_event));
         }
 
         info!("协议竞速完成，选择协议: {:?}", best_protocol);
@@ -282,7 +309,24 @@ impl ProtocolRacer {
 
         // 触发协议切换事件
         if let Some(callback) = &self.event_callback {
-            callback(ClientEvent::ProtocolSwitched(protocol));
+            let old_protocol = *self.current_protocol.read().await;
+            let metadata = crate::common::callback::create_metadata_from_protocol_message(
+                "protocol_switched",
+                None,
+                None,
+                None,
+                "default_session".to_string(),
+            );
+            let custom_event = crate::common::callback::CustomEvent {
+                event_name: "protocol_switched".to_string(),
+                data: serde_json::json!({
+                    "new_protocol": protocol,
+                    "old_protocol": old_protocol,
+                    "session_id": "default_session"
+                }).to_string().into_bytes(),
+                metadata,
+            };
+            callback(ClientEvent::Custom(custom_event));
         }
 
         Ok(())

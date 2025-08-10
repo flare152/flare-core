@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::{TransportProtocol, Result, FlareError};
+use crate::Result;
 use crate::common::types::ConnectionInfo;
 
 /// 连接管理器 trait

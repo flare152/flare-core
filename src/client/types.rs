@@ -101,6 +101,10 @@ pub struct ConnectionStats {
     pub heartbeat_count: u64,
     /// 发生错误的总次数
     pub error_count: u64,
+    /// 心跳响应延迟（毫秒）
+    pub heartbeat_latency_ms: u64,
+    /// 连接质量评分（0.0-1.0）
+    pub connection_quality: f64,
 }
 
 impl Default for ConnectionStats {
@@ -115,6 +119,8 @@ impl Default for ConnectionStats {
             reconnect_count: 0,
             heartbeat_count: 0,
             error_count: 0,
+            heartbeat_latency_ms: 0,
+            connection_quality: 1.0,
         }
     }
 }
@@ -241,38 +247,72 @@ impl Default for MessagePriority {
     }
 }
 
-/// 连接事件
+// 客户端事件定义已迁移到 `crate::client::events` 模块
+
+// 回调定义已迁移到 `crate::client::callbacks` 模块
+
+// 统一回调管理器已迁移到 `crate::client::callbacks::ClientCallbackManager`
+
+/// 连接健康检查配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ClientEvent {
-    /// 连接建立
-    Connected(TransportProtocol),
-    /// 连接断开
-    Disconnected,
-    /// 重连开始
-    Reconnecting,
-    /// 重连成功
-    Reconnected(TransportProtocol),
-    /// 重连失败
-    ReconnectFailed,
-    /// 消息接收
-    MessageReceived(UnifiedProtocolMessage),
-    /// 消息发送
-    MessageSent(String),
-    /// 消息发送失败
-    MessageFailed(String, String),
-    /// 心跳
-    Heartbeat,
-    /// 错误
-    Error(String),
-    /// 协议切换
-    ProtocolSwitched(TransportProtocol),
+pub struct HealthCheckConfig {
+    /// 心跳间隔（毫秒）
+    pub heartbeat_interval_ms: u64,
+    /// 心跳超时时间（毫秒）
+    pub heartbeat_timeout_ms: u64,
+    /// 连接活性检查间隔（毫秒）
+    pub activity_check_interval_ms: u64,
+    /// 连接活性超时时间（毫秒）
+    pub activity_timeout_ms: u64,
+    /// 最大心跳失败次数
+    pub max_heartbeat_failures: u32,
+    /// 是否启用自动重连
+    pub auto_reconnect_enabled: bool,
+    /// 重连延迟（毫秒）
+    pub reconnect_delay_ms: u64,
+    /// 最大重连次数
+    pub max_reconnect_attempts: u32,
 }
 
-/// 客户端事件回调
-pub type ClientEventCallback = Box<dyn Fn(ClientEvent) + Send + Sync>;
+impl Default for HealthCheckConfig {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval_ms: 30000, // 30秒
+            heartbeat_timeout_ms: 10000,  // 10秒
+            activity_check_interval_ms: 60000, // 1分钟
+            activity_timeout_ms: 300000,  // 5分钟
+            max_heartbeat_failures: 3,
+            auto_reconnect_enabled: true,
+            reconnect_delay_ms: 1000,
+            max_reconnect_attempts: 5,
+        }
+    }
+}
 
-/// 消息处理器
-pub type MessageHandler = Box<dyn Fn(UnifiedProtocolMessage) + Send + Sync>;
+/// 连接健康状态
+#[derive(Debug, Clone, PartialEq)]
+pub enum HealthStatus {
+    /// 健康状态
+    Healthy,
+    /// 警告状态（心跳延迟较高）
+    Warning,
+    /// 不健康状态（心跳失败）
+    Unhealthy,
+    /// 死亡状态（连接已断开）
+    Dead,
+}
 
-/// 错误处理器
-pub type ErrorHandler = Box<dyn Fn(String) + Send + Sync>; 
+/// 连接健康检查结果
+#[derive(Debug, Clone)]
+pub struct HealthCheckResult {
+    /// 健康状态
+    pub status: HealthStatus,
+    /// 心跳延迟（毫秒）
+    pub heartbeat_latency_ms: u64,
+    /// 最后活动时间
+    pub last_activity: chrono::DateTime<chrono::Utc>,
+    /// 心跳失败次数
+    pub heartbeat_failures: u32,
+    /// 连接质量评分（0.0-1.0）
+    pub connection_quality: f64,
+} 

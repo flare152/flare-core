@@ -422,7 +422,7 @@ pub fn protocol_message_to_metadata(
 /// 便利方法 - 从UnifiedProtocolMessage创建各种消息内容
 pub mod converters {
     use super::*;
-    use crate::common::protocol::{MessageType, UnifiedProtocolMessage};
+    use crate::common::protocol::UnifiedProtocolMessage;
     
     // ==================== 消息转换器 ====================
     

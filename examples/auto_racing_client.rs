@@ -3,11 +3,11 @@
 //! 展示如何使用 FlareIMClient 进行协议竞速自动选择最佳协议
 
 use flare_core::client::{
-    FlareIMClientBuilder, 
-    config::{ProtocolSelectionMode, ServerAddresses, ProtocolRacingConfig, ProtocolWeights},
-    types::{ClientEvent, ClientEventCallback},
+    Client, config::{ClientConfigBuilder, ProtocolSelectionMode, ServerAddresses, ProtocolRacingConfig, ProtocolWeights},
+    protocol_racer::ClientEvent,
+    types::MessagePriority,
 };
-use flare_core::common::{TransportProtocol, ProtoMessage};
+use flare_core::common::{TransportProtocol, UnifiedProtocolMessage};
 use std::sync::Arc;
 use tracing::{info, warn, error, debug};
 
@@ -21,42 +21,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("🚀 启动协议竞速客户端示例");
 
     // 创建事件回调
-    let event_callback: Arc<ClientEventCallback> = Arc::new(Box::new(|event| {
+    let event_callback = Arc::new(Box::new(|event: ClientEvent| {
         match event {
-            ClientEvent::Connected(protocol) => {
-                info!("[AutoRacing] 连接成功，使用协议: {:?}", protocol);
+            ClientEvent::Connect(_) => {
+                info!("[AutoRacing] 连接成功");
             }
-            ClientEvent::Disconnected => {
+            ClientEvent::Disconnect(_) => {
                 info!("[AutoRacing] 连接断开");
             }
-            ClientEvent::Reconnecting => {
-                info!("[AutoRacing] 正在重连");
-            }
-            ClientEvent::Reconnected(protocol) => {
-                info!("[AutoRacing] 重连成功，使用协议: {:?}", protocol);
-            }
-            ClientEvent::Error(error_msg) => {
-                error!("[AutoRacing] 连接错误: {}", error_msg);
-            }
-            ClientEvent::MessageReceived(message) => {
-                info!("[AutoRacing] 收到消息: ID={}, 类型={}, 内容={}", 
-                      message.id, message.message_type, 
-                      String::from_utf8_lossy(&message.payload));
-            }
-            ClientEvent::MessageSent(message_id) => {
-                info!("[AutoRacing] 消息发送成功: {}", message_id);
-            }
-            ClientEvent::MessageFailed(message_id, error) => {
-                warn!("[AutoRacing] 消息发送失败: {} - {}", message_id, error);
-            }
-            ClientEvent::Heartbeat => {
+            ClientEvent::Heartbeat(_) => {
                 debug!("[AutoRacing] 心跳");
             }
-            ClientEvent::ProtocolSwitched(protocol) => {
-                info!("[AutoRacing] 协议切换到: {:?}", protocol);
-            }
-            ClientEvent::ReconnectFailed => {
-                error!("[AutoRacing] 重连失败");
+            ClientEvent::Custom(_) => {
+                info!("[AutoRacing] 自定义事件");
             }
         }
     }));
@@ -81,8 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_quic_url("quic://127.0.0.1:4010".to_string())
         .with_websocket_url("ws://127.0.0.1:4000".to_string());
 
-    // 创建客户端，使用协议竞速模式
-    let mut client = FlareIMClientBuilder::new("racing_user".to_string())
+    // 创建客户端配置，使用协议竞速模式
+    let config = ClientConfigBuilder::new("racing_user".to_string())
         .server_addresses(server_addresses)
         .protocol_selection_mode(ProtocolSelectionMode::AutoRacing)
         .protocol_racing(racing_config)
@@ -96,81 +73,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compression(true)
         .encryption(true)
         .tls(true)  // 协议竞速使用 TLS
-        .build()?
-        .with_event_callback(event_callback);
+        .build()?;
+
+    // 创建客户端
+    let mut client = Client::new(config);
 
     info!("协议竞速客户端创建成功，开始连接...");
 
     // 连接到服务器
     match client.connect().await {
-        Ok(protocol) => {
-            info!("协议竞速客户端连接成功，使用协议: {:?}", protocol);
+        Ok(()) => {
+            info!("协议竞速客户端连接成功");
 
             // 等待连接稳定
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-            // 发送文本消息
-            info!("发送文本消息...");
-            let text_result = client.send_text_message("server", "Hello from AutoRacing client!").await?;
-            if text_result.success {
-                info!("文本消息发送成功: {}", text_result.message_id);
-            } else {
-                warn!("文本消息发送失败: {:?}", text_result.error_message);
-            }
+            // 发送测试消息
+            info!("发送测试消息...");
+            let test_message = UnifiedProtocolMessage::text(
+                "Hello from auto-racing client!".to_string(),
+            );
+            let test_result = client.send_message(
+                test_message,
+                MessagePriority::Normal,
+                "server".to_string(),
+            ).await?;
+            info!("测试消息发送成功: {:?}", test_result);
 
-            // 发送二进制消息
-            info!("发送二进制消息...");
-            let binary_data = b"Binary message from AutoRacing client".to_vec();
-            let binary_result = client.send_binary_message("server", binary_data, "binary".to_string()).await?;
-            if binary_result.success {
-                info!("二进制消息发送成功: {}", binary_result.message_id);
-            } else {
-                warn!("二进制消息发送失败: {:?}", binary_result.error_message);
+            // 发送性能测试消息
+            info!("发送性能测试消息...");
+            for i in 0..5 {
+                let perf_message = UnifiedProtocolMessage::text(
+                    format!("QUIC 性能测试消息 #{}", i + 1),
+                );
+                let perf_result = client.send_message(
+                    perf_message,
+                    MessagePriority::Low,
+                    "server".to_string(),
+                ).await?;
+                info!("性能测试消息 #{} 发送成功: {:?}", i + 1, perf_result);
+                
+                // 短暂延迟
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
 
             // 发送自定义消息
             info!("发送自定义消息...");
-            let custom_message = ProtoMessage::new(
-                uuid::Uuid::new_v4().to_string(),
-                "custom".to_string(),
+            let custom_message = UnifiedProtocolMessage::custom_message(
+                "performance_test".to_string(),
                 serde_json::json!({
-                    "type": "custom",
-                    "client": "autoracing",
-                    "data": "Custom message from AutoRacing client",
-                    "timestamp": chrono::Utc::now().timestamp()
+                    "type": "performance_test",
+                    "client": "auto_racing",
+                    "data": "Performance test from auto-racing client",
+                    "timestamp": chrono::Utc::now().timestamp(),
+                    "protocol_racing": true
                 }).to_string().into_bytes(),
             );
-            let custom_result = client.send_message("server", custom_message).await?;
-            if custom_result.success {
-                info!("自定义消息发送成功: {}", custom_result.message_id);
-            } else {
-                warn!("自定义消息发送失败: {:?}", custom_result.error_message);
-            }
+            let custom_result = client.send_message(
+                custom_message,
+                MessagePriority::Normal,
+                "server".to_string(),
+            ).await?;
+            info!("自定义消息发送成功: {:?}", custom_result);
 
-            // 获取连接状态
-            let status = client.get_status().await;
-            info!("当前连接状态: {:?}", status);
-
-            // 获取当前协议（已移除，使用协议竞速器获取）
-            info!("当前使用协议: 自动选择");
-
-            // 获取协议性能指标
-            let metrics = client.get_all_protocol_metrics().await;
-            info!("协议性能指标: {:?}", metrics);
-
-            // 获取最佳协议
-            if let Some(best_protocol) = client.get_best_protocol().await {
-                info!("最佳协议: {:?}", best_protocol);
-            }
-
-            // 检查协议可用性
-            let quic_available = client.is_protocol_available(TransportProtocol::QUIC).await;
-            let ws_available = client.is_protocol_available(TransportProtocol::WebSocket).await;
-            info!("协议可用性 - QUIC: {}, WebSocket: {}", quic_available, ws_available);
-
-            // 获取消息队列长度
-            let queue_length = client.get_message_queue_length().await;
-            info!("消息队列长度: {}", queue_length);
+            // 检查连接状态
+            let is_connected = client.is_connected().await;
+            info!("当前连接状态: {}", is_connected);
 
             // 持续运行一段时间，发送心跳消息
             info!("协议竞速客户端运行中，按 Ctrl+C 停止...");
@@ -183,21 +151,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 counter += 1;
                 
                 // 每10秒发送一次心跳消息
-                let heartbeat_msg = format!("AutoRacing heartbeat message #{}", counter);
-                if let Err(e) = client.send_text_message("server", &heartbeat_msg).await {
+                let heartbeat_msg = format!("Auto-racing heartbeat message #{}", counter);
+                let heartbeat_message = UnifiedProtocolMessage::text(heartbeat_msg);
+                if let Err(e) = client.send_message(
+                    heartbeat_message,
+                    MessagePriority::Low,
+                    "server".to_string(),
+                ).await {
                     warn!("心跳消息发送失败: {}", e);
                 }
                 
                 // 检查连接状态
-                let status = client.get_status().await;
-                if status != flare_core::client::connection_manager::ConnectionState::Connected {
-                    warn!("连接状态异常: {:?}", status);
-                }
-                
-                // 每30秒检查一次协议性能
-                if counter % 3 == 0 {
-                    let metrics = client.get_all_protocol_metrics().await;
-                    info!("当前协议性能指标: {:?}", metrics);
+                let is_connected = client.is_connected().await;
+                if !is_connected {
+                    warn!("连接状态异常: 已断开");
                 }
                 
                 // 运行60秒后停止

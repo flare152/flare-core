@@ -10,11 +10,9 @@ use flare_core::{
 #[tokio::main]
 async fn main() -> Result<()> {
     // 初始化日志
-    // 初始化日志
     tracing_subscriber::fmt()
         .with_env_filter("flare_core=info,flare_core::server=debug")
         .init();
-
 
     println!("🚀 Flare IM 服务端示例");
     println!("======================");
@@ -30,55 +28,85 @@ async fn main() -> Result<()> {
     
     // 示例1: 仅使用WebSocket
     println!("\n📡 示例1: 仅使用WebSocket");
-    let _server1 = FlareIMServerBuilder::new()
+    match FlareIMServerBuilder::new()
         .websocket_only()
         .websocket_addr("127.0.0.1:4001".parse().unwrap())
-        .build();
+        .build() {
+        Ok(_) => println!("✅ WebSocket服务器构建成功"),
+        Err(e) => println!("❌ WebSocket服务器构建失败: {}", e),
+    }
     
     // 示例2: 仅使用QUIC
     println!("\n📡 示例2: 仅使用QUIC");
-    let _server2 = FlareIMServerBuilder::new()
+    match FlareIMServerBuilder::new()
         .quic_only()
         .quic_addr("127.0.0.1:4011".parse().unwrap())
         .quic_tls("certs/server.crt".to_string(), "certs/server.key".to_string())
-        .build();
+        .build() {
+        Ok(_) => println!("✅ QUIC服务器构建成功"),
+        Err(e) => println!("❌ QUIC服务器构建失败: {}", e),
+    }
     
     // 示例3: 同时使用WebSocket和QUIC
     println!("\n📡 示例3: 同时使用WebSocket和QUIC");
-    let _server3 = FlareIMServerBuilder::new()
+    match FlareIMServerBuilder::new()
         .both_protocols()
         .websocket_addr("127.0.0.1:4002".parse().unwrap())
         .quic_addr("127.0.0.1:4012".parse().unwrap())
         .quic_tls("certs/server.crt".to_string(), "certs/server.key".to_string())
-        .build();
+        .build() {
+        Ok(_) => println!("✅ 双协议服务器构建成功"),
+        Err(e) => println!("❌ 双协议服务器构建失败: {}", e),
+    }
     
     // 示例4: 自动选择协议
     println!("\n📡 示例4: 自动选择协议");
-    let _server4 = FlareIMServerBuilder::new()
+    match FlareIMServerBuilder::new()
         .auto_protocol()
         .websocket_addr("127.0.0.1:4003".parse().unwrap())
         .quic_addr("127.0.0.1:4013".parse().unwrap())
         .quic_tls("certs/server.crt".to_string(), "certs/server.key".to_string())
-        .build();
+        .build() {
+        Ok(_) => println!("✅ 自动协议服务器构建成功"),
+        Err(e) => println!("❌ 自动协议服务器构建失败: {}", e),
+    }
     
     // 示例5: 使用协议选择枚举
     println!("\n📡 示例5: 使用协议选择枚举");
-    let _server5 = FlareIMServerBuilder::new()
+    match FlareIMServerBuilder::new()
         .protocol_selection(ProtocolSelection::Both)
         .websocket_addr("127.0.0.1:4004".parse().unwrap())
         .quic_addr("127.0.0.1:4014".parse().unwrap())
         .quic_tls("certs/server.crt".to_string(), "certs/server.key".to_string())
-        .build();
+        .build() {
+        Ok(_) => println!("✅ 协议选择服务器构建成功"),
+        Err(e) => println!("❌ 协议选择服务器构建失败: {}", e),
+    }
     
     // 运行默认服务器 (同时使用WebSocket和QUIC)
     println!("\n🚀 启动默认服务器 (同时使用WebSocket和QUIC)");
-    let mut server = FlareIMServerBuilder::new()
+    let server_result = FlareIMServerBuilder::new()
         .both_protocols()
         .websocket_addr("127.0.0.1:4000".parse().unwrap())
         .quic_addr("127.0.0.1:4010".parse().unwrap())
         .quic_tls("certs/server.crt".to_string(), "certs/server.key".to_string())
         .max_connections(1000)
         .build();
+    
+    let mut server = match server_result {
+        Ok(server) => {
+            println!("✅ 服务器构建成功!");
+            server
+        }
+        Err(e) => {
+            eprintln!("❌ 服务器构建失败: {}", e);
+            eprintln!("请检查:");
+            eprintln!("1. 端口是否被占用");
+            eprintln!("2. 证书文件是否存在");
+            eprintln!("3. 网络配置是否正确");
+            return Err(e);
+        }
+    };
     
     // 启动服务器
     if let Err(e) = server.start().await {
