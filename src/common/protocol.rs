@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use uuid;
 
 /// 二进制协议消息
 ///
@@ -20,6 +21,8 @@ pub struct UnifiedProtocolMessage {
     pub d: Option<String>,
     /// 时间戳（可选）
     pub ts: Option<DateTime<Utc>>,
+    /// 请求ID（用于请求-响应模式，可选）
+    pub req_id: Option<String>,
 }
 
 /// 消息类型枚举
@@ -161,6 +164,7 @@ impl UnifiedProtocolMessage {
             s: None,
             d: None,
             ts: None,
+            req_id: None,
         }
     }
 
@@ -179,6 +183,18 @@ impl UnifiedProtocolMessage {
     /// 设置时间戳
     pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
         self.ts = Some(timestamp);
+        self
+    }
+
+    /// 设置请求ID
+    pub fn with_request_id(mut self, request_id: String) -> Self {
+        self.req_id = Some(request_id);
+        self
+    }
+
+    /// 设置请求ID（生成新的UUID）
+    pub fn with_new_request_id(mut self) -> Self {
+        self.req_id = Some(uuid::Uuid::new_v4().to_string());
         self
     }
 
@@ -409,14 +425,7 @@ impl UnifiedProtocolMessage {
         }
     }
 
-    /// 获取连接用户ID（向后兼容）
-    pub fn as_connect_user(&self) -> Option<String> {
-        if let Some((user_id, _)) = self.as_connect_info() {
-            Some(user_id)
-        } else {
-            None
-        }
-    }
+
 
     /// 获取带元数据的连接信息
     pub fn as_connect_with_metadata(&self) -> Option<(String, String, Vec<u8>)> {
@@ -597,6 +606,16 @@ impl UnifiedProtocolMessage {
     /// 获取目标ID
     pub fn target_id(&self) -> Option<&str> {
         self.d.as_deref()
+    }
+
+    /// 获取请求ID
+    pub fn get_request_id(&self) -> Option<&str> {
+        self.req_id.as_deref()
+    }
+
+    /// 检查是否有请求ID
+    pub fn has_request_id(&self) -> bool {
+        self.req_id.is_some()
     }
 }
 

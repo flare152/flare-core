@@ -13,7 +13,7 @@ use quinn::{Connection as QuinnConnection, SendStream, RecvStream};
 use crate::common::{
     conn::{Connection, ConnectionConfig, ConnectionStats}, 
     Result, FlareError,
-    MessageParser, MessageCallback
+    MessageParser
 };
 use crate::common::types::{Platform, ConnectionStatus};
 use crate::common::protocol::UnifiedProtocolMessage;
@@ -60,7 +60,7 @@ pub struct QuicConnection {
 
 impl QuicConnection {
     /// 创建新的QUIC连接
-    pub fn new(config: ConnectionConfig) -> Self {
+    pub fn new(config: ConnectionConfig, message_parser: Arc<MessageParser>) -> Self {
         let session_id = Uuid::new_v4().to_string();
         
         debug!("创建新的QUIC连接: {} - {}", config.id, session_id);
@@ -79,7 +79,7 @@ impl QuicConnection {
             heartbeat_task: Arc::new(Mutex::new(None)),
             receive_task: Arc::new(Mutex::new(None)),
             running: Arc::new(RwLock::new(false)),
-            message_parser: Arc::new(MessageParser::with_default_callbacks()),
+            message_parser,
         }
     }
 
@@ -262,7 +262,7 @@ impl Connection for QuicConnection {
         TransportProtocol::QUIC
     }
 
-    async fn is_active(&self, timeout: Duration) -> bool {
+    async fn is_active(&self, _timeout: Duration) -> bool {
         // 检查连接状态
         let state = self.state.read().await;
         if *state != ConnectionStatus::Connected {
@@ -493,8 +493,9 @@ impl QuicConnectionFactory {
         connection: QuinnConnection,
         send_stream: SendStream,
         recv_stream: RecvStream,
+        message_parser: Arc<MessageParser>,
     ) -> QuicConnection {
-        let mut quic_conn = QuicConnection::new(config);
+        let mut quic_conn = QuicConnection::new(config, message_parser);
         
         // 设置QUIC连接和流
         quic_conn.set_quinn_connection(connection, send_stream, recv_stream).await;

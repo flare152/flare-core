@@ -24,7 +24,7 @@ use super::config::WebSocketServerConfig;
 /// WebSocket服务器
 pub struct WebSocketServer {
     config: WebSocketServerConfig,
-    connection_manager: Arc<MemoryServerConnectionManager>,
+    connection_manager: Arc<dyn ServerConnectionManager>,
     message_parser: Arc<MessageParser>,
     running: Arc<RwLock<bool>>,
     server_task: Option<tokio::task::JoinHandle<()>>,
@@ -34,7 +34,7 @@ pub struct WebSocketServer {
 impl WebSocketServer {
     pub fn new(
         config: WebSocketServerConfig,
-        connection_manager: Arc<MemoryServerConnectionManager>,
+        connection_manager: Arc<dyn ServerConnectionManager>,
         message_parser: Arc<MessageParser>,
         running: Arc<RwLock<bool>>,
     ) -> Self {
@@ -154,13 +154,13 @@ impl WebSocketServer {
 /// - 连接关闭和清理
 #[derive(Clone)]
 pub struct WebSocketConnectionHandler {
-    connection_manager: Arc<MemoryServerConnectionManager>,
+    connection_manager: Arc<dyn ServerConnectionManager>,
     message_parser: Arc<MessageParser>,
 }
 
 impl WebSocketConnectionHandler {
     pub fn new(
-        connection_manager: Arc<MemoryServerConnectionManager>,
+        connection_manager: Arc<dyn ServerConnectionManager>,
         message_parser: Arc<MessageParser>,
     ) -> Self {
         Self {
@@ -235,6 +235,7 @@ impl WebSocketConnectionHandler {
         let ws_connection = crate::common::conn::websocket::WebSocketConnectionFactory::from_tungstenite_stream_plain(
             config,
             ws_stream,
+            Arc::clone(&self.message_parser),
         );
         
         // 等待认证

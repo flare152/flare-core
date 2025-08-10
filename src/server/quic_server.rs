@@ -24,7 +24,7 @@ use super::config::QuicServerConfig;
 /// QUIC服务器
 pub struct QuicServer {
     config: QuicServerConfig,
-    connection_manager: Arc<MemoryServerConnectionManager>,
+    connection_manager: Arc<dyn ServerConnectionManager>,
     message_parser: Arc<MessageParser>,
     running: Arc<RwLock<bool>>,
     server_task: Option<tokio::task::JoinHandle<()>>,
@@ -34,7 +34,7 @@ pub struct QuicServer {
 impl QuicServer {
     pub fn new(
         config: QuicServerConfig,
-        connection_manager: Arc<MemoryServerConnectionManager>,
+        connection_manager: Arc< dyn ServerConnectionManager>,
         message_parser: Arc<MessageParser>,
         running: Arc<RwLock<bool>>,
     ) -> Self {
@@ -183,13 +183,13 @@ impl QuicServer {
 /// - 连接关闭和清理
 #[derive(Clone)]
 pub struct QuicConnectionHandler {
-    connection_manager: Arc<MemoryServerConnectionManager>,
+    connection_manager: Arc<dyn ServerConnectionManager>,
     message_parser: Arc<MessageParser>,
 }
 
 impl QuicConnectionHandler {
     pub fn new(
-        connection_manager: Arc<MemoryServerConnectionManager>,
+        connection_manager: Arc<dyn ServerConnectionManager>,
         message_parser: Arc<MessageParser>,
     ) -> Self {
         Self {
@@ -245,6 +245,7 @@ impl QuicConnectionHandler {
             connection,
             send_stream,
             recv_stream,
+            Arc::clone(&self.message_parser),
         ).await;
         
         // 等待认证

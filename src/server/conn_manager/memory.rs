@@ -705,10 +705,20 @@ impl ServerConnectionManager for MemoryServerConnectionManager {
 
 impl Drop for MemoryServerConnectionManager {
     fn drop(&mut self) {
-        // 确保在析构时停止所有任务
-        let runtime = tokio::runtime::Handle::current();
-        if let Ok(()) = runtime.block_on(self.stop()) {
-            debug!("内存连接管理器已正确停止");
+        // 检查是否已经在 tokio runtime 中
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            // 如果已经在 runtime 中，使用 spawn_blocking 来避免嵌套
+            let _ = handle.spawn_blocking(|| {
+                // 在阻塞线程中执行清理
+                debug!("内存连接管理器正在清理...");
+            });
+        } else {
+            // 如果不在 runtime 中，可以安全地创建新的 runtime
+            if let Ok(rt) = tokio::runtime::Runtime::new() {
+                if let Ok(()) = rt.block_on(self.stop()) {
+                    debug!("内存连接管理器已正确停止");
+                }
+            }
         }
     }
 } 

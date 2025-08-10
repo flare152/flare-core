@@ -357,5 +357,5 @@ where
     }
 }
 
-// 为方便使用，提供类型别名
-pub type DefaultMessageProcessor = MessageProcessor<crate::server::conn_manager::MemoryServerConnectionManager>; 
+/// 默认消息处理器类型
+pub type DefaultMessageProcessor = MessageProcessor<dyn ServerConnectionManager>; 

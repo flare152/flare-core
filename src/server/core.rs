@@ -4,23 +4,22 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error, warn};
+use tracing::{info, warn};
 
 use crate::common::{
-    protocol::UnifiedProtocolMessage,
-    Result, ProtocolSelection, FlareError,
+    Result, ProtocolSelection,
     MessageParser,
 };
 
 use super::{
     config::ServerConfig,
     conn_manager::{
-        MemoryServerConnectionManager, ServerConnectionManagerStats, 
-        ServerConnectionManagerConfig, ServerConnectionManager
+        MemoryServerConnectionManager, 
+        ServerConnectionManager, ServerConnectionManagerConfig
     },
     websocket_server::WebSocketServer,
     quic_server::QuicServer,
-    message_processor::{MessageProcessor, DefaultMessageProcessor},
+    message_processor::{DefaultMessageProcessor},
 };
 
 /// Flare IM 服务端
@@ -29,11 +28,9 @@ pub struct FlareIMServer {
     /// 配置
     config: ServerConfig,
     /// 连接管理器
-    connection_manager: Arc<MemoryServerConnectionManager>,
+    connection_manager: Arc<dyn ServerConnectionManager>,
     /// 消息解析器
     message_parser: Arc<MessageParser>,
-    /// 消息处理器
-    message_processor: Arc<DefaultMessageProcessor>,
     /// WebSocket服务器
     websocket_server: Option<WebSocketServer>,
     /// QUIC服务器
@@ -44,7 +41,23 @@ pub struct FlareIMServer {
 
 impl FlareIMServer {
     /// 创建新的 Flare IM 服务端
-    pub fn new(config: ServerConfig) -> Self {
+    pub fn new(
+        config: ServerConfig,
+        connection_manager: Arc<dyn ServerConnectionManager>,
+        message_parser: Arc<MessageParser>,
+    ) -> Self {
+        Self {
+            config,
+            connection_manager,
+            message_parser,
+            websocket_server: None,
+            quic_server: None,
+            running: Arc::new(RwLock::new(false)),
+        }
+    }
+    
+    /// 使用默认配置创建新的 Flare IM 服务端
+    pub fn with_default_config(config: ServerConfig) -> Self {
         // 创建连接管理器配置
         let conn_config = ServerConnectionManagerConfig {
             max_connections: config.connection_manager.max_connections,
@@ -60,17 +73,8 @@ impl FlareIMServer {
         
         let connection_manager = Arc::new(MemoryServerConnectionManager::new(conn_config));
         let message_parser = Arc::new(MessageParser::with_default_callbacks());
-        let message_processor = Arc::new(MessageProcessor::new(connection_manager.clone()));
         
-        Self {
-            config,
-            connection_manager,
-            message_parser,
-            message_processor,
-            websocket_server: None,
-            quic_server: None,
-            running: Arc::new(RwLock::new(false)),
-        }
+        Self::new(config, connection_manager, message_parser)
     }
     
     /// 设置消息解析器
@@ -132,7 +136,7 @@ impl FlareIMServer {
                     self.start_websocket_server().await?;
                     info!("Flare IM 服务端已启动 (自动选择: WebSocket)");
                 } else {
-                    return Err(FlareError::general_error("自动模式下没有可用的协议"));
+                    return Err(crate::common::error::FlareError::general_error("自动模式下没有可用的协议"));
                 }
             }
         }
@@ -171,18 +175,13 @@ impl FlareIMServer {
     }
 
     /// 获取连接管理器
-    pub fn get_connection_manager(&self) -> Arc<MemoryServerConnectionManager> {
+    pub fn get_connection_manager(&self) -> Arc<dyn ServerConnectionManager> {
         Arc::clone(&self.connection_manager)
     }
 
     /// 获取消息解析器
     pub fn get_message_parser(&self) -> Arc<MessageParser> {
         Arc::clone(&self.message_parser)
-    }
-
-    /// 获取消息处理器
-    pub fn get_message_processor(&self) -> Arc<DefaultMessageProcessor> {
-        Arc::clone(&self.message_processor)
     }
     
     /// 启动WebSocket服务器
@@ -227,6 +226,7 @@ impl FlareIMServer {
 /// Flare IM 服务端构建器
 pub struct FlareIMServerBuilder {
     config: ServerConfig,
+    connection_manager: Option<Arc<dyn ServerConnectionManager>>,
     message_parser: Option<Arc<MessageParser>>,
 }
 
@@ -234,6 +234,7 @@ impl FlareIMServerBuilder {
     pub fn new() -> Self {
         Self {
             config: ServerConfig::default(),
+            connection_manager: None,
             message_parser: None,
         }
     }
@@ -276,6 +277,19 @@ impl FlareIMServerBuilder {
         self
     }
     
+    /// 设置连接管理器 (必须实现 ServerConnectionManager trait)
+    pub fn with_connection_manager(mut self, manager: Arc<dyn ServerConnectionManager>) -> Self {
+        // 从提供的连接管理器获取配置
+        let config = manager.get_config().clone();
+        
+        // 创建新的 MemoryServerConnectionManager 实例，使用相同的配置
+        // 这样可以确保类型一致性，同时允许用户提供自定义的连接管理器
+        self.connection_manager = Some(manager);
+        
+        self
+    }
+    
+    /// 设置消息解析器
     pub fn with_message_parser(mut self, parser: Arc<MessageParser>) -> Self {
         self.message_parser = Some(parser);
         self
@@ -293,6 +307,23 @@ impl FlareIMServerBuilder {
 
     pub fn max_connections(mut self, max: usize) -> Self {
         self.config.connection_manager.max_connections = max;
+        // 如果已经设置了连接管理器，则更新其配置
+        if let Some(ref manager) = self.connection_manager {
+            let current_config = manager.get_config();
+            let new_config = ServerConnectionManagerConfig {
+                max_connections: max,
+                connection_timeout_ms: current_config.connection_timeout_ms,
+                heartbeat_interval_ms: current_config.heartbeat_interval_ms,
+                heartbeat_timeout_ms: current_config.heartbeat_timeout_ms,
+                max_missed_heartbeats: current_config.max_missed_heartbeats,
+                cleanup_interval_ms: current_config.cleanup_interval_ms,
+                enable_auto_reconnect: current_config.enable_auto_reconnect,
+                max_reconnect_attempts: current_config.max_reconnect_attempts,
+                reconnect_delay_ms: current_config.reconnect_delay_ms,
+            };
+            // 创建一个新的 MemoryServerConnectionManager 实例
+            self.connection_manager = Some(Arc::new(MemoryServerConnectionManager::new(new_config)));
+        }
         self
     }
     
@@ -303,14 +334,26 @@ impl FlareIMServerBuilder {
         self
     }
     
-    pub fn build(self) -> FlareIMServer {
-        let mut server = FlareIMServer::new(self.config);
-        
-        if let Some(parser) = self.message_parser {
-            server = server.with_message_parser(parser);
+    pub fn build(self) -> Result<FlareIMServer> {
+        // 验证必需字段并提供默认值
+        let connection_manager = self.connection_manager
+            .unwrap_or_else(|| Arc::new(MemoryServerConnectionManager::new(ServerConnectionManagerConfig::default())));
+
+        let message_parser = self.message_parser
+            .unwrap_or_else(|| Arc::new(MessageParser::with_default_callbacks()));
+
+        // 验证连接管理器配置
+        let config = connection_manager.get_config();
+        if config.max_connections == 0 {
+            return Err(crate::common::error::FlareError::InvalidConfiguration(
+                "连接管理器最大连接数不能为0".to_string()
+            ));
         }
-        
-        server
+
+        // 创建服务器实例
+        let server = FlareIMServer::new(self.config, connection_manager, message_parser);
+
+        Ok(server)
     }
 }
 
@@ -319,3 +362,5 @@ impl Default for FlareIMServerBuilder {
         Self::new()
     }
 } 
+
+ 

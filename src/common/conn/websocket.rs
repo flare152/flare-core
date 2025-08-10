@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use crate::common::{
     conn::{Connection, ConnectionConfig, ConnectionStats}, 
     error::{Result, FlareError},
-    MessageParser, MessageCallback
+    MessageParser
 };
 use crate::common::types::{Platform, ConnectionStatus, TransportProtocol};
 use crate::common::protocol::UnifiedProtocolMessage;
@@ -57,7 +57,7 @@ enum WebSocketStreamEnum {
 
 impl WebSocketConnection {
     /// 创建新的WebSocket连接
-    pub fn new(config: ConnectionConfig) -> Self {
+    pub fn new(config: ConnectionConfig, message_parser: Arc<MessageParser>) -> Self {
         let session_id = uuid::Uuid::new_v4().to_string();
         
         debug!("创建新的WebSocket连接: {} - {}", config.id, session_id);
@@ -71,7 +71,7 @@ impl WebSocketConnection {
             ws_stream: Arc::new(Mutex::new(None)),
             receive_task: Arc::new(Mutex::new(None)),
             running: Arc::new(RwLock::new(false)),
-            message_parser: Arc::new(MessageParser::with_default_callbacks()),
+            message_parser,
         }
     }
     
@@ -79,6 +79,7 @@ impl WebSocketConnection {
     pub fn from_tungstenite_stream(
         config: ConnectionConfig,
         ws_stream: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        message_parser: Arc<MessageParser>,
     ) -> Self {
         let session_id = uuid::Uuid::new_v4().to_string();
         
@@ -93,7 +94,7 @@ impl WebSocketConnection {
             ws_stream: Arc::new(Mutex::new(Some(WebSocketStreamEnum::MaybeTls(ws_stream)))),
             receive_task: Arc::new(Mutex::new(None)),
             running: Arc::new(RwLock::new(false)),
-            message_parser: Arc::new(MessageParser::with_default_callbacks()),
+            message_parser,
         }
     }
     
@@ -101,6 +102,7 @@ impl WebSocketConnection {
     pub fn from_tungstenite_stream_plain(
         config: ConnectionConfig,
         ws_stream: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+        message_parser: Arc<MessageParser>,
     ) -> Self {
         let session_id = uuid::Uuid::new_v4().to_string();
         
@@ -115,7 +117,7 @@ impl WebSocketConnection {
             ws_stream: Arc::new(Mutex::new(Some(WebSocketStreamEnum::Plain(ws_stream)))),
             receive_task: Arc::new(Mutex::new(None)),
             running: Arc::new(RwLock::new(false)),
-            message_parser: Arc::new(MessageParser::with_default_callbacks()),
+            message_parser,
         }
     }
     
@@ -391,7 +393,7 @@ impl Connection for WebSocketConnection {
     }
     
     fn close(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
-        let ws_stream = Arc::clone(&self.ws_stream);
+        let _ws_stream = Arc::clone(&self.ws_stream);
         let running = Arc::clone(&self.running);
         let receive_task = Arc::clone(&self.receive_task);
         let state = Arc::clone(&self.state);
@@ -482,20 +484,22 @@ impl WebSocketConnectionFactory {
     pub fn from_tungstenite_stream(
         config: ConnectionConfig,
         ws_stream: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        message_parser: Arc<MessageParser>,
     ) -> WebSocketConnection {
-        WebSocketConnection::from_tungstenite_stream(config, ws_stream)
+        WebSocketConnection::from_tungstenite_stream(config, ws_stream, message_parser)
     }
     
     /// 从现有的tokio-tungstenite连接创建WebSocket连接（纯TcpStream）
     pub fn from_tungstenite_stream_plain(
         config: ConnectionConfig,
         ws_stream: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+        message_parser: Arc<MessageParser>,
     ) -> WebSocketConnection {
-        WebSocketConnection::from_tungstenite_stream_plain(config, ws_stream)
+        WebSocketConnection::from_tungstenite_stream_plain(config, ws_stream, message_parser)
     }
     
     /// 创建新的WebSocket连接（用于测试）
-    pub fn create_connection(config: ConnectionConfig) -> WebSocketConnection {
-        WebSocketConnection::new(config)
+    pub fn create_connection(config: ConnectionConfig, message_parser: Arc<MessageParser>) -> WebSocketConnection {
+        WebSocketConnection::new(config, message_parser)
     }
 } 

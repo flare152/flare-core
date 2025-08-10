@@ -177,7 +177,7 @@ pub type ConnectionEventCallback = Box<dyn Fn(String, String) + Send + Sync>;
 /// 
 /// 管理所有客户端连接，提供连接生命周期管理、心跳处理、消息路由等功能
 #[async_trait]
-pub trait ServerConnectionManager: Send + Sync {
+pub trait ServerConnectionManager: Send + Sync + std::any::Any {
     /// 启动连接管理器
     async fn start(&self) -> Result<()>;
     
